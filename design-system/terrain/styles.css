@@ -1,0 +1,5 @@
+/* Terrain Design System — Global entry point */
+@import './tokens/colors.css';
+@import './tokens/typography.css';
+@import './tokens/spacing.css';
+@import './tokens/effects.css';

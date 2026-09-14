@@ -1,0 +1,106 @@
+/* ==========================================================================
+   TERRAIN DS — Colors
+   ========================================================================== */
+
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap');
+
+:root {
+  /* Primary — Emerald */
+  --color-primary-50:  #ECFDF5;
+  --color-primary-100: #D1FAE5;
+  --color-primary-200: #A7F3D0;
+  --color-primary-300: #6EE7B7;
+  --color-primary-400: #34D399;
+  --color-primary-500: #10B981;
+  --color-primary-600: #059669;
+  --color-primary-700: #047857;
+  --color-primary-800: #065F46;
+  --color-primary-900: #064E3B;
+
+  /* Accent — Amber */
+  --color-accent-50:  #FFFBEB;
+  --color-accent-100: #FEF3C7;
+  --color-accent-200: #FDE68A;
+  --color-accent-300: #FCD34D;
+  --color-accent-400: #FBBF24;
+  --color-accent-500: #F59E0B;
+  --color-accent-600: #D97706;
+  --color-accent-700: #B45309;
+  --color-accent-800: #92400E;
+  --color-accent-900: #78350F;
+
+  /* Neutral — Stone (warm) */
+  --color-stone-50:  #FAFAF9;
+  --color-stone-100: #F5F5F4;
+  --color-stone-200: #E7E5E4;
+  --color-stone-300: #D6D3D1;
+  --color-stone-400: #A8A29E;
+  --color-stone-500: #78716C;
+  --color-stone-600: #57534E;
+  --color-stone-700: #44403C;
+  --color-stone-800: #292524;
+  --color-stone-900: #1C1917;
+
+  /* Semantic — Error */
+  --color-error-50:  #FEF2F2;
+  --color-error-100: #FEE2E2;
+  --color-error-500: #EF4444;
+  --color-error-600: #DC2626;
+  --color-error-700: #B91C1C;
+
+  /* Semantic — Info */
+  --color-info-50:  #EFF6FF;
+  --color-info-100: #DBEAFE;
+  --color-info-500: #3B82F6;
+  --color-info-600: #2563EB;
+  --color-info-700: #1D4ED8;
+
+  /* Semantic — Orange (retour) */
+  --color-orange-50:  #FFF7ED;
+  --color-orange-100: #FFEDD5;
+  --color-orange-500: #F97316;
+  --color-orange-600: #EA580C;
+  --color-orange-700: #C2410C;
+
+  /* ——— Semantic aliases ——— */
+  --color-bg:          #FDFCF8;
+  --color-bg-subtle:   #F5F5F4;
+  --color-surface:     #FFFFFF;
+  --color-border:      #E7E0D5;
+  --color-border-subtle: #F0EDE6;
+
+  --color-text-primary:   var(--color-stone-800);
+  --color-text-secondary: var(--color-stone-500);
+  --color-text-muted:     var(--color-stone-400);
+  --color-text-inverse:   #FFFFFF;
+  --color-text-link:      var(--color-primary-600);
+
+  /* Status — commandes */
+  --status-pending-bg:    var(--color-accent-100);
+  --status-pending-text:  var(--color-accent-800);
+  --status-pending-dot:   var(--color-accent-500);
+
+  --status-assigned-bg:   var(--color-info-100);
+  --status-assigned-text: var(--color-info-700);
+  --status-assigned-dot:  var(--color-info-600);
+
+  --status-active-bg:     var(--color-primary-600);
+  --status-active-text:   #FFFFFF;
+  --status-active-dot:    #FFFFFF;
+
+  --status-delivered-bg:   var(--color-primary-50);
+  --status-delivered-text: var(--color-primary-800);
+  --status-delivered-dot:  var(--color-primary-600);
+
+  --status-paid-bg:        var(--color-primary-100);
+  --status-paid-text:      var(--color-primary-800);
+  --status-paid-dot:       var(--color-primary-700);
+
+  --status-return-bg:      var(--color-orange-100);
+  --status-return-text:    var(--color-orange-700);
+  --status-return-dot:     var(--color-orange-500);
+
+  --status-cancelled-bg:   var(--color-error-100);
+  --status-cancelled-text: var(--color-error-700);
+  --status-cancelled-dot:  var(--color-error-500);
+}

@@ -1,0 +1,14 @@
+# Générés par Expo — en complément du .gitignore racine (node_modules/,
+# .expo/, dist/, .env, etc. déjà couverts là-bas).
+expo-env.d.ts
+web-build/
+/ios
+/android
+.kotlin/
+.metro-health-check*
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision

@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Recette — livreur</title>
+    <style>
+      :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+      body { margin: 0; padding: 2rem; max-width: 60rem; }
+      h1 { margin-top: 0; }
+      section { margin-block: 1.5rem; padding: 1rem; border: 1px solid #8886; border-radius: .5rem; }
+      label { display: block; margin-block: .75rem .25rem; font-weight: 600; }
+      input, button { box-sizing: border-box; font: inherit; padding: .55rem; }
+      input { width: 100%; }
+      button { cursor: pointer; margin: .25rem .25rem .25rem 0; }
+      button:disabled { cursor: not-allowed; opacity: .5; }
+      #socket-status { font-weight: 600; }
+      #error-message { color: #c21d1d; font-weight: 600; }
+      .order { padding: 1rem 0; border-bottom: 1px solid #8886; }
+      .order:last-child { border-bottom: 0; }
+      .order dl { display: grid; grid-template-columns: max-content 1fr; gap: .3rem .75rem; margin: .5rem 0; }
+      .order dt { font-weight: 600; }
+      .order dd { margin: 0; overflow-wrap: anywhere; }
+      pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
+      #socket-log { max-height: 18rem; overflow: auto; }
+    </style>
+  </head>
+  <body>
+    <h1>Recette livreur</h1>
+    <p id="socket-status" aria-live="polite">Socket.io : connexion…</p>
+
+    <section aria-label="Paramètres du livreur">
+      <label for="driver-id">driver_id</label>
+      <input id="driver-id" value="33333333-3333-3333-3333-333333333333" required>
+
+      <label for="zone-id">zone_id</label>
+      <input id="zone-id" value="11111111-1111-1111-1111-111111111111" required>
+    </section>
+
+    <section>
+      <h2>Commandes</h2>
+      <p id="error-message" role="alert"></p>
+      <div id="orders">Chargement des commandes disponibles…</div>
+    </section>
+
+    <section>
+      <h2>Journal Socket.io</h2>
+      <pre id="socket-log">En attente d’événements…</pre>
+    </section>
+
+    <script src="https://cdn.socket.io/4.8.3/socket.io.min.js"></script>
+    <script>
+      const API_URL = 'http://localhost:3000';
+      const driverIdInput = document.querySelector('#driver-id');
+      const zoneIdInput = document.querySelector('#zone-id');
+      const socketStatus = document.querySelector('#socket-status');
+      const errorMessage = document.querySelector('#error-message');
+      const ordersElement = document.querySelector('#orders');
+      const socketLog = document.querySelector('#socket-log');
+      const ordersById = new Map();
+      let socket;
+
+      function appendSocketLog(eventName, payload) {
+        const line = `[${new Date().toLocaleTimeString('fr-FR')}] ${eventName}\n${JSON.stringify(payload, null, 2)}`;
+        socketLog.textContent = socketLog.textContent === 'En attente d’événements…'
+          ? line
+          : `${socketLog.textContent}\n\n${line}`;
+        socketLog.scrollTop = socketLog.scrollHeight;
+      }
+
+      function setError(message) {
+        errorMessage.textContent = message;
+      }
+
+      function renderOrders() {
+        ordersElement.replaceChildren();
+        if (ordersById.size === 0) {
+          ordersElement.textContent = 'Aucune commande à afficher.';
+          return;
+        }
+
+        for (const order of ordersById.values()) {
+          const card = document.createElement('article');
+          card.className = 'order';
+          const details = document.createElement('dl');
+          const values = [
+            ['ID', order.id],
+            ['Statut', order.status],
+            ['Prix', `${order.priceCents} centimes`],
+            ['Version', String(order.version)]
+          ];
+          for (const [label, value] of values) {
+            const term = document.createElement('dt');
+            term.textContent = label;
+            const description = document.createElement('dd');
+            description.textContent = value;
+            details.append(term, description);
+          }
+          card.append(details);
+
+          const take = document.createElement('button');
+          take.type = 'button';
+          take.textContent = 'Prendre';
+          take.disabled = order.status !== 'AVAILABLE';
+          take.addEventListener('click', () => transitionOrder(order.id, 'assign'));
+
+          const collect = document.createElement('button');
+          collect.type = 'button';
+          collect.textContent = 'Collecté';
+          collect.disabled = order.status !== 'ASSIGNED' || order.driverId !== driverIdInput.value.trim();
+          collect.addEventListener('click', () => transitionOrder(order.id, 'collect'));
+
+          const complete = document.createElement('button');
+          complete.type = 'button';
+          complete.textContent = 'Livré';
+          complete.disabled = order.status !== 'COLLECTED' || order.driverId !== driverIdInput.value.trim();
+          complete.addEventListener('click', () => transitionOrder(order.id, 'complete'));
+          card.append(take, collect, complete);
+          ordersElement.append(card);
+        }
+      }
+
+      async function responseBody(response) {
+        const text = await response.text();
+        try {
+          return text === '' ? null : JSON.parse(text);
+        } catch {
+          return text;
+        }
+      }
+
+      async function loadAvailableOrders({ reset = false } = {}) {
+        if (reset) {
+          ordersById.clear();
+        }
+        try {
+          const zoneId = zoneIdInput.value.trim();
+          const response = await fetch(`${API_URL}/api/v1/orders/available?zoneId=${encodeURIComponent(zoneId)}`);
+          const body = await responseBody(response);
+          if (!response.ok || !Array.isArray(body)) {
+            setError(`Chargement impossible (HTTP ${response.status}) : ${JSON.stringify(body)}`);
+            renderOrders();
+            return;
+          }
+          for (const order of body) {
+            ordersById.set(order.id, order);
+          }
+          setError('');
+          renderOrders();
+        } catch (error) {
+          setError(`Chargement impossible : ${error instanceof Error ? error.message : String(error)}`);
+          renderOrders();
+        }
+      }
+
+      async function transitionOrder(orderId, action) {
+        const order = ordersById.get(orderId);
+        if (order === undefined) {
+          return;
+        }
+        setError('');
+        try {
+          const response = await fetch(`${API_URL}/api/v1/orders/${orderId}/${action}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              driverId: driverIdInput.value.trim(),
+              expectedVersion: order.version
+            })
+          });
+          const body = await responseBody(response);
+          if (!response.ok) {
+            setError(`Action « ${action} » refusée (HTTP ${response.status}) : ${JSON.stringify(body)}`);
+            return;
+          }
+          ordersById.set(body.id, body);
+          renderOrders();
+        } catch (error) {
+          setError(`Action « ${action} » impossible : ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+
+      function connectSocket() {
+        socket?.disconnect();
+        socketStatus.textContent = 'Socket.io : connexion…';
+        socket = io(API_URL, {
+          query: { zoneId: zoneIdInput.value.trim() },
+          transports: ['websocket']
+        });
+        socket.on('connect', () => {
+          socketStatus.textContent = `Socket.io : connecté à la zone ${zoneIdInput.value.trim()}`;
+        });
+        socket.on('connect_error', (error) => {
+          socketStatus.textContent = `Socket.io : erreur de connexion — ${error.message}`;
+          appendSocketLog('connect_error', { message: error.message });
+        });
+        socket.on('new_order', (payload) => {
+          appendSocketLog('new_order', payload);
+          // L'événement ne contient pas le prix, le statut ni la version : on les récupère via l'API.
+          void loadAvailableOrders();
+        });
+        socket.on('order_taken', (payload) => {
+          appendSocketLog('order_taken', payload);
+          // Une commande prise par un autre livreur disparaît de cette liste.
+          if (payload.driverId !== driverIdInput.value.trim()) {
+            ordersById.delete(payload.orderId);
+            renderOrders();
+          }
+        });
+      }
+
+      zoneIdInput.addEventListener('change', () => {
+        connectSocket();
+        void loadAvailableOrders({ reset: true });
+      });
+      connectSocket();
+      void loadAvailableOrders({ reset: true });
+    </script>
+  </body>
+</html>

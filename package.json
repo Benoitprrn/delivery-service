@@ -1,0 +1,32 @@
+{
+  "name": "delivery-service",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "npm@11",
+  "scripts": {
+    "dev:api": "npm run dev -w apps/api",
+    "dev:web": "npm run dev -w apps/web",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "check:boundaries": "depcruise apps/api/src --config .dependency-cruiser.cjs"
+  },
+  "devDependencies": {
+    "dependency-cruiser": "^16.0.0",
+    "typescript": "^5.7.0",
+    "eslint": "^10.0.0",
+    "@eslint/js": "^10.0.0",
+    "typescript-eslint": "^8.57.0",
+    "supabase": "^2.117.0"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true
+  }
+}

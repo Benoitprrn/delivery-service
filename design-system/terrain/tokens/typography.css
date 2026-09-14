@@ -1,0 +1,37 @@
+/* ==========================================================================
+   TERRAIN DS — Typography
+   ========================================================================== */
+
+:root {
+  --font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+  --font-family-mono: 'SFMono-Regular', 'Consolas', 'Liberation Mono', monospace;
+
+  /* Scale */
+  --text-display:    48px;
+  --text-h1:         36px;
+  --text-h2:         28px;
+  --text-h3:         22px;
+  --text-body-lg:    17px;
+  --text-body:       15px;
+  --text-body-sm:    13px;
+  --text-label:      12px;
+  --text-caption:    11px;
+
+  /* Line heights */
+  --leading-display: 1.1;
+  --leading-heading: 1.2;
+  --leading-body:    1.6;
+  --leading-label:   1.4;
+
+  /* Weights */
+  --weight-regular:  400;
+  --weight-medium:   500;
+  --weight-semibold: 600;
+  --weight-bold:     700;
+
+  /* Letter spacing */
+  --tracking-tight:  -0.02em;
+  --tracking-normal: 0;
+  --tracking-wide:   0.05em;
+  --tracking-wider:  0.1em;
+}

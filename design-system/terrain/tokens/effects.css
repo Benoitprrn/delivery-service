@@ -1,0 +1,39 @@
+/* ==========================================================================
+   TERRAIN DS — Effects (radius, shadow, z-index, motion)
+   ========================================================================== */
+
+:root {
+  /* Border radius */
+  --radius-sm:   6px;
+  --radius-md:   10px;
+  --radius-lg:   14px;
+  --radius-xl:   20px;
+  --radius-2xl:  28px;
+  --radius-full: 9999px;
+
+  /* Shadows */
+  --shadow-xs: 0 1px 2px rgba(41, 37, 36, 0.04);
+  --shadow-sm: 0 1px 4px rgba(41, 37, 36, 0.06), 0 1px 2px rgba(41, 37, 36, 0.04);
+  --shadow-md: 0 4px 12px rgba(41, 37, 36, 0.07), 0 2px 4px rgba(41, 37, 36, 0.04);
+  --shadow-lg: 0 8px 24px rgba(41, 37, 36, 0.08), 0 4px 8px rgba(41, 37, 36, 0.04);
+  --shadow-xl: 0 16px 48px rgba(41, 37, 36, 0.10), 0 8px 16px rgba(41, 37, 36, 0.05);
+
+  /* Z-index */
+  --z-base:     0;
+  --z-raised:   10;
+  --z-dropdown: 100;
+  --z-sticky:   200;
+  --z-overlay:  300;
+  --z-modal:    400;
+  --z-toast:    500;
+  --z-tooltip:  600;
+
+  /* Motion */
+  --ease-default:  cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring:   cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-in:       cubic-bezier(0.4, 0, 1, 1);
+  --ease-out:      cubic-bezier(0, 0, 0.2, 1);
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+  --duration-slow: 350ms;
+}
