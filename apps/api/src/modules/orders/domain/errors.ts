@@ -12,6 +12,13 @@ export class OrderNotFoundError extends Error {
   }
 }
 
+export class OrderRouteAccessDeniedError extends Error {
+  public constructor(message = 'Drivers can only access routes for orders in their zone') {
+    super(message)
+    this.name = 'OrderRouteAccessDeniedError'
+  }
+}
+
 export class InvalidTransitionError extends Error {
   public constructor(message = 'Order status transition is not allowed') {
     super(message)

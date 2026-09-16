@@ -1,5 +1,6 @@
 import { ZodError } from 'zod'
 import { MerchantNotFoundError } from '../../domain/errors.js'
+import { InvalidMerchantLogoError } from '../../domain/invalid-merchant-logo-error.js'
 
 type ErrorBody = {
   error: string
@@ -24,11 +25,13 @@ export function mapErrorToHttp(error: unknown, correlationId: string): HttpError
     return mappedError(404, error, correlationId)
   }
   if (error instanceof ZodError) {
+    const isMissingContact = error.issues.some((issue) => issue.message === 'At least one phone number is required')
     return {
-      statusCode: 400,
-      body: { error: 'ValidationError', message: 'Request validation failed', correlationId }
+      statusCode: isMissingContact ? 422 : 400,
+      body: { error: 'ValidationError', message: isMissingContact ? 'At least one phone number is required' : 'Request validation failed', correlationId }
     }
   }
+  if (error instanceof InvalidMerchantLogoError) return mappedError(422, error, correlationId)
   return {
     statusCode: 500,
     body: { error: 'InternalServerError', message: 'An unexpected error occurred', correlationId }

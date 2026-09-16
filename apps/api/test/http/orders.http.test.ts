@@ -2,11 +2,16 @@ import { randomUUID } from 'node:crypto'
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { FastifyInstance } from 'fastify'
 import { buildApp } from '../../src/app.js'
+import { createOrdersModule } from '../../src/modules/orders/public.js'
+import { config } from '../../src/platform/config.js'
+import { pool } from '../../src/platform/db.js'
 import { getDriverAccessToken } from '../support/get-driver-access-token.js'
 import { getMerchantAccessToken } from '../support/get-merchant-access-token.js'
 
 const zoneId = '11111111-1111-1111-1111-111111111111'
 const merchantId = '22222222-2222-2222-2222-222222222222'
+const driverId = '33333333-3333-3333-3333-333333333333'
+const orders = createOrdersModule(pool, config.OSRM_URL, config.OPENCAGE_API_KEY)
 
 let app: FastifyInstance
 let merchantAccessToken: string
@@ -156,7 +161,7 @@ describe('orders HTTP endpoints', () => {
       method: 'POST',
       url: '/api/v1/drivers/availability',
       headers: { authorization: `Bearer ${driverAccessToken}` },
-      payload: { available: true }
+      payload: { available: true, lat: 46.2058, lng: 5.2255 }
     })
     // GET /orders/available est réservé aux livreurs de la zone demandée
     // (voir le correctif d'autorisation étape 10) — un token commerçant y
@@ -184,18 +189,17 @@ describe('orders HTTP endpoints', () => {
 
   it('returns driver, details and proof data to the owning merchant', async () => {
     const order = await createValidOrder({ mode: 'scheduled', at: '2030-01-01T12:00:00+01:00' })
-    const assigned = await app.inject({
-      method: 'POST',
-      url: `/api/v1/orders/${order.id}/assign`,
-      headers: { authorization: `Bearer ${driverAccessToken}` },
-      payload: { expectedVersion: order.version }
+    const assigned = await orders.assignOrder({
+      orderId: order.id as string,
+      driverId,
+      expectedVersion: order.version as number,
+      actor: { type: 'driver', id: driverId }
     })
-    expect(assigned.statusCode).toBe(200)
     const collected = await app.inject({
       method: 'POST',
       url: `/api/v1/orders/${order.id}/collect`,
       headers: { authorization: `Bearer ${driverAccessToken}` },
-      payload: { expectedVersion: assigned.json().version }
+      payload: { expectedVersion: assigned.version }
     })
     expect(collected.statusCode).toBe(200)
     const completed = await app.inject({
@@ -217,6 +221,7 @@ describe('orders HTTP endpoints', () => {
     expect(body.orders).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: order.id,
+        trackingToken: expect.any(String),
         driverName: 'Jean-Paul',
         driverPhone: null,
         pickupScheduledAt: '2030-01-01T11:00:00.000Z',
@@ -231,18 +236,6 @@ describe('orders HTTP endpoints', () => {
         })
       })
     ]))
-  })
-
-  it('rejects driver transitions performed by a merchant', async () => {
-    const order = await createValidOrder()
-    const response = await app.inject({
-      method: 'POST',
-      url: `/api/v1/orders/${order.id}/assign`,
-      headers: { authorization: `Bearer ${merchantAccessToken}` },
-      payload: { expectedVersion: order.version }
-    })
-
-    expect(response.statusCode).toBe(403)
   })
 
   it('returns 404 for an unknown route', async () => {

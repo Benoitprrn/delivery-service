@@ -5,7 +5,17 @@ import type { Order } from '../../src/modules/orders/domain/order.js'
 import type { OrderRepository, CreateOrderInput } from '../../src/modules/orders/ports/order-repository.js'
 import type { RoutingProvider } from '../../src/modules/orders/ports/routing-provider.js'
 
-const merchant = { id: 'merchant', zoneId: 'zone', name: 'Shop', address: '1 Main Street', phone: '0', lat: 46.2, lng: 5.22 }
+const merchant = {
+  id: 'merchant',
+  zoneId: 'zone',
+  name: 'Shop',
+  address: '1 Main Street',
+  phoneLandline: '0',
+  phoneMobile: null,
+  logoUrl: null,
+  lat: 46.2,
+  lng: 5.22
+}
 const zone = { id: 'zone', name: 'Zone', centerLat: 46.2, centerLng: 5.22, radiusKm: 2 }
 const now = new Date('2026-09-13T10:00:00.000Z')
 

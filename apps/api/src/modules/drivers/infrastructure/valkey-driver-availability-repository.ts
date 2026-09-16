@@ -1,7 +1,7 @@
 import type Redis from 'ioredis'
 import type { DriverAvailabilityRepository } from '../ports/driver-availability-repository.js'
 
-const TTL_SECONDS = 300
+const TTL_SECONDS = 600
 
 function availabilityKey(driverId: string): string {
   return `driver:${driverId}:is_available`

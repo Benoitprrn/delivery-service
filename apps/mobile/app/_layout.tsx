@@ -1,4 +1,5 @@
 import '../global.css';
+import '../lib/location-task';
 
 import {
   DMSans_400Regular,
@@ -12,6 +13,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { AuthProvider, useAuth } from '../lib/auth-context';
+import { usePushNotifications } from '../lib/push-notifications';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -38,6 +40,7 @@ function AppShell({ fontsLoaded }: { fontsLoaded: boolean }) {
   // résolues — sinon flash de couleur (splash Emerald -> fond app) pendant
   // que la session se restaure depuis expo-secure-store.
   const ready = fontsLoaded && status !== 'loading';
+  usePushNotifications(ready && status === 'signedIn' && role === 'driver');
 
   useEffect(() => {
     if (ready) {
@@ -49,16 +52,18 @@ function AppShell({ fontsLoaded }: { fontsLoaded: boolean }) {
     if (!ready) return;
 
     const inTabsGroup = segments[0] === '(tabs)';
-    // Modal de détail commande (voir app/order/[id]/index.tsx) — route racine
-    // authentifiée, pas un onglet. Doit compter comme "déjà au bon endroit"
-    // sinon la garde la referme immédiatement après ouverture.
+    // Modales de détail commande / offre de dispatch (voir
+    // app/order/[id]/index.tsx et app/dispatch-offer/[id]/index.tsx) — routes
+    // racine authentifiées, pas des onglets. Doivent compter comme "déjà au
+    // bon endroit" sinon la garde les referme immédiatement après ouverture.
     const inOrderModal = segments[0] === 'order';
+    const inDispatchOfferModal = segments[0] === 'dispatch-offer';
     const onLoginScreen = segments[0] === 'login';
     const isAuthorizedDriver = status === 'signedIn' && role === 'driver';
 
     if (!isAuthorizedDriver && !onLoginScreen) {
       router.replace('/login');
-    } else if (isAuthorizedDriver && !inTabsGroup && !inOrderModal) {
+    } else if (isAuthorizedDriver && !inTabsGroup && !inOrderModal && !inDispatchOfferModal) {
       router.replace('/(tabs)/map');
     }
   }, [ready, status, role, segments, router]);
@@ -72,6 +77,7 @@ function AppShell({ fontsLoaded }: { fontsLoaded: boolean }) {
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="order/[id]/index" options={{ presentation: 'modal' }} />
         <Stack.Screen name="order/[id]/proof" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="dispatch-offer/[id]/index" options={{ presentation: 'modal', gestureEnabled: false }} />
       </Stack>
     </GestureHandlerRootView>
   );

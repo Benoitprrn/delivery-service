@@ -15,7 +15,12 @@ import {
 } from './schemas.js'
 
 type OrdersHttpRoutesOptions = {
-  orders: ReturnType<typeof createOrdersModule>
+  orders: Omit<ReturnType<typeof createOrdersModule>,
+    'getOrderTracking' | 'findActiveTrackingTokensByDriverId' |
+    'findDriversWithActiveOrderForMerchant' | 'recordDispatchAttempt' | 'markDispatchFailed' |
+    'findOrderById' | 'findDispatchMetadata' | 'findStuckAvailableOrders'
+  > &
+    Partial<Pick<ReturnType<typeof createOrdersModule>, 'getOrderTracking'>>
   findMerchantById: ReturnType<typeof createMerchantsModule>['findMerchantById']
   findZoneById: ReturnType<typeof createZonesModule>['findZoneById']
   findDriverById: ReturnType<typeof createDriversModule>['findDriverById']
@@ -116,6 +121,19 @@ export async function registerOrderHttpRoutes(
     }
   })
 
+  app.get('/api/v1/orders/track/:token', {
+    config: { rateLimit: { max: 20, timeWindow: '1 minute' } }
+  }, async (request, reply) => {
+    const token = (request.params as { token?: string }).token
+    // Do not validate UUID syntax here: malformed and unknown values both map
+    // to the same 404 response, so the endpoint reveals nothing about tokens.
+    const tracking = token === undefined || options.orders.getOrderTracking === undefined
+      ? null
+      : await options.orders.getOrderTracking(token)
+    if (tracking === null) return reply.code(404).send({ error: 'OrderNotFound' })
+    return reply.code(200).send(tracking)
+  })
+
   app.get('/api/v1/orders/merchant', async (request, reply) => {
     try {
       if (request.authUser === undefined) {
@@ -201,21 +219,22 @@ export async function registerOrderHttpRoutes(
     }
   })
 
-  app.post('/api/v1/orders/:id/assign', async (request, reply) => {
+  app.get('/api/v1/orders/:id/route', async (request, reply) => {
     try {
       const { id } = orderIdParamsSchema.parse(request.params)
-      const body = orderTransitionBodySchema.parse(request.body)
       if (request.authUser?.role !== 'driver') {
-        return reply.code(403).send({ error: 'ForbiddenError', message: 'Only drivers can perform this action', correlationId: request.correlationId })
+        return reply.code(403).send({ error: 'ForbiddenError', message: 'Only drivers can access this resource', correlationId: request.correlationId })
       }
-      const order = await options.orders.assignOrder({
-        orderId: id,
-        ...body,
-        driverId: request.authUser.id,
-        actor: { type: 'driver', id: request.authUser.id },
-        correlationId: request.correlationId
-      })
-      return reply.code(200).send(order)
+      const driver = await options.findDriverById(request.authUser.id)
+      if (driver === null) {
+        return reply.code(404).send({
+          error: 'DriverNotFoundError',
+          message: 'Driver profile was not found',
+          correlationId: request.correlationId
+        })
+      }
+      const geometry = await options.orders.getOrderRoute({ orderId: id, driverZoneId: driver.zoneId })
+      return reply.code(200).send({ geometry })
     } catch (error) {
       return sendMappedError(request, reply, error)
     }

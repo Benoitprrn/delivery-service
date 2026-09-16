@@ -1,6 +1,6 @@
 'use client'
 
-import { Camera, Clock, Euro, MapPin, Phone, Route, UserRound } from 'lucide-react'
+import { Camera, Clock, Euro, Link2, MapPin, Phone, Route, UserRound } from 'lucide-react'
 import { useToast } from '@/components/toast-provider'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import {
@@ -109,6 +109,18 @@ export function OrderModal({ order, onOpenChange }: OrderModalProps) {
           <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">
             <div className="space-y-5">
               <ProgressBar order={order} />
+
+              {(order.status === 'ASSIGNED' || order.status === 'COLLECTED') && (
+                <a
+                  href={`/track/${order.trackingToken}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 text-body font-semibold text-primary-700 transition-colors hover:text-primary-800 hover:underline"
+                >
+                  <Link2 className="h-4 w-4" />
+                  Suivre la livraison en temps réel →
+                </a>
+              )}
 
               <Section title="Client">
                 <div className="space-y-2 text-body text-stone-700">

@@ -15,7 +15,18 @@ const nextConfig: NextConfig = {
   // — TileLayer tente alors d'attacher sa pane à un conteneur déjà détruit
   // ("Cannot read properties of undefined (reading 'appendChild')"). N'affecte
   // que le dev server (Strict Mode ne double-invoque pas en production).
-  reactStrictMode: false
+  reactStrictMode: false,
+
+  // Next 16 active par défaut un canal de débogage React expérimental dans
+  // `next dev`. Lors d'une navigation qui redirige après connexion, Next peut
+  // recevoir la fin du canal avant un dernier chunk puis tente d'écrire et de
+  // fermer deux fois le WritableStream. Cela produit les faux positifs
+  // "Cannot write/close a CLOSED writable stream" dans hot-reloader-app.tsx.
+  // Le canal ne sert qu'aux outils de débogage de Next et n'est pas requis par
+  // l'application ; le désactiver n'affecte donc pas le comportement en prod.
+  experimental: {
+    reactDebugChannel: false
+  }
 }
 
 export default nextConfig

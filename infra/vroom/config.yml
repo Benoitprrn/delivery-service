@@ -1,0 +1,33 @@
+# Config vroom-express — dérivée du config.yml par défaut :
+# https://github.com/VROOM-Project/vroom-express/blob/master/config.yml
+# Tous les champs cliArgs sont requis (vroom-express plante au démarrage sur
+# le premier champ manquant, constaté en pratique) — seuls `router`,
+# `routingServers` et les valeurs propres au projet (bbox Bourg-en-Bresse via
+# OSRM, profil vélo uniquement) diffèrent du défaut.
+#
+# host.docker.internal : le conteneur VROOM tourne en réseau bridge (pas host,
+# pour ne pas entrer en collision avec le port 3000 de l'API Fastify), donc il
+# atteint l'OSRM du pilote (docker run -p 5000:5000, cf. scripts/dev.sh) via
+# la passerelle Docker plutôt que via localhost.
+cliArgs:
+  geometry: false
+  planmode: false
+  threads: 4
+  explore: 5
+  limit: '1mb'
+  logdir: '..'
+  logsize: '100M'
+  maxlocations: 1000
+  maxvehicles: 200
+  override: ['c', 'g', 'l', 't', 'x']
+  path: ''
+  port: 3000
+  router: 'osrm'
+  timeout: 300000
+  baseurl: '/'
+
+routingServers:
+  osrm:
+    bike:
+      host: 'host.docker.internal'
+      port: '5000'

@@ -15,7 +15,10 @@ export function buildOrderCreatedEvent(order: Order): DomainEvent {
   return event(order, 'order.created.v1', {
     orderId: order.id,
     zoneId: order.zoneId,
-    merchantId: order.merchantId
+    merchantId: order.merchantId,
+    distanceM: order.distanceM,
+    durationS: order.durationS,
+    priceCents: order.priceCents
   })
 }
 

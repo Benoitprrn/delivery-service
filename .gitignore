@@ -12,3 +12,5 @@ supabase/.branches/
 supabase/.temp/
 infra/osrm/data/
 .gstack/
+google-services.json
+GoogleService-Info.plist

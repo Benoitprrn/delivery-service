@@ -1,4 +1,4 @@
-import { Camera, Map, Marker, type CameraRef } from '@maplibre/maplibre-react-native';
+import { Camera, GeoJSONSource, Layer, Map, Marker, type CameraRef } from '@maplibre/maplibre-react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { ChevronLeft, ChevronRight, MapPin } from 'lucide-react-native';
@@ -10,19 +10,22 @@ import type { Socket } from 'socket.io-client';
 import { AvailabilityToggle } from '../../../components/AvailabilityToggle';
 import { ErrorState, LoadingState } from '../../../components/list-state';
 import { OrderCard } from '../../../components/order-card';
-import { SliderButton } from '../../../components/SliderButton';
-import { api, ApiError } from '../../../lib/api';
+import { api, ApiError, type OrderRouteGeometry } from '../../../lib/api';
+import { syncLocationTrackingProfile } from '../../../lib/location-tracking';
 import { useAvailability } from '../../../lib/availability-context';
-import { EMERALD_600, STONE_800, WHITE } from '../../../lib/colors';
-import type { AvailableOrder } from '../../../lib/orders-types';
+import { BLUE_500, EMERALD_600, STONE_800, WHITE } from '../../../lib/colors';
+import type { DriverOrder } from '../../../lib/orders-types';
 import { getSocket } from '../../../lib/socket';
 import { supabase } from '../../../lib/supabase';
-import { showToast } from '../../../lib/toast';
 
 const MAPTILER_KEY = process.env.EXPO_PUBLIC_MAPTILER_KEY;
 const BOURG_EN_BRESSE_CENTER: [number, number] = [5.2255, 46.2058]; // [lng, lat]
-const INITIAL_ZOOM = 12;
+const INITIAL_ZOOM = 10;
+const MIN_ZOOM = 10;
+const MAX_ZOOM = 15;
 const SINGLE_ORDER_ZOOM = 15;
+const ORDER_ROUTE_ZOOM_MARGIN = 0.5;
+const METERS_PER_PIXEL_AT_ZOOM_0 = 156543.03392;
 const MARKER_SIZE = 28;
 const MARKER_SIZE_SELECTED = 36;
 const MARKER_INACTIVE_OPACITY = 0.6;
@@ -35,13 +38,10 @@ const CARD_BOTTOM_MARGIN = 8;
 const CAMERA_TOP_MARGIN = 24;
 const CAMERA_SIDE_MARGIN = 32;
 // Marge supplémentaire au-dessus de la card flottante pour que le marqueur
-// actif ne touche jamais son bord supérieur (Fix 5 du brief).
+// actif ne touche jamais son bord supérieur.
 const CAMERA_BOTTOM_SAFETY_MARGIN = 24;
 const FIT_BOUNDS_DURATION = 500;
 const EASE_TO_DURATION = 300;
-// Le brief demande un minimum de 44x44 pour les flèches ; la règle Terrain
-// (apps/mobile/CLAUDE.md) impose ≥52px pour toute zone tactile — 52 satisfait
-// les deux contraintes simultanément, donc on ne descend pas à 44.
 const HEADER_ARROW_SIZE = 52;
 const HEADER_ICON_SIZE = 24;
 
@@ -50,7 +50,7 @@ type Bounds = [west: number, south: number, east: number, north: number];
 // null si 0/1 commande ou si toutes les commandes partagent exactement les
 // mêmes coordonnées — fitBounds sur des bounds dégénérées produit un
 // comportement caméra indéfini selon la plateforme.
-function computeBounds(orders: AvailableOrder[]): Bounds | null {
+function computeBounds(orders: DriverOrder[]): Bounds | null {
   if (orders.length < 2) return null;
 
   let west = orders[0]!.pickupLng;
@@ -69,24 +69,57 @@ function computeBounds(orders: AvailableOrder[]): Bounds | null {
   return [west, south, east, north];
 }
 
+type CameraPadding = { top: number; right: number; bottom: number; left: number };
+
+// `fitBounds` délègue le calcul du zoom au SDK natif. Pour une paire de points
+// très proche, ce calcul a été observé comme un no-op sur device, alors que le
+// fit global (bounds beaucoup plus grands) fonctionne. On calcule donc ici une
+// caméra explicite, stable et bornée par les mêmes min/max zoom que <Camera>.
+function computeOrderCamera(order: DriverOrder, viewportWidth: number, viewportHeight: number, padding: CameraPadding) {
+  const center: [number, number] = [
+    (order.pickupLng + order.deliveryLng) / 2,
+    (order.pickupLat + order.deliveryLat) / 2
+  ];
+  const latitudeRadians = (center[1] * Math.PI) / 180;
+  const metersPerLongitudeDegree = 111_320 * Math.cos(latitudeRadians);
+  const horizontalDistance = Math.abs(order.deliveryLng - order.pickupLng) * metersPerLongitudeDegree;
+  const verticalDistance = Math.abs(order.deliveryLat - order.pickupLat) * 110_574;
+  const availableWidth = Math.max(1, viewportWidth - padding.left - padding.right);
+  const availableHeight = Math.max(1, viewportHeight - padding.top - padding.bottom);
+  const metersPerPixelAtZoom0 = METERS_PER_PIXEL_AT_ZOOM_0 * Math.cos(latitudeRadians);
+  const zoomForWidth = horizontalDistance === 0 ? SINGLE_ORDER_ZOOM : Math.log2((metersPerPixelAtZoom0 * availableWidth) / horizontalDistance);
+  const zoomForHeight = verticalDistance === 0 ? SINGLE_ORDER_ZOOM : Math.log2((metersPerPixelAtZoom0 * availableHeight) / verticalDistance);
+  const zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.min(zoomForWidth, zoomForHeight) - ORDER_ROUTE_ZOOM_MARGIN));
+
+  return { center, zoom };
+}
+
+const ACTIVE_STATUSES = new Set(['ASSIGNED', 'COLLECTED', 'RETURNING']);
+
 function buildHeaderLabel(count: number): string {
-  if (count === 0) return 'Aucune commande disponible';
-  const noun = count === 1 ? 'commande disponible' : 'commandes disponibles';
+  if (count === 0) return 'Aucune course en cours';
+  const noun = count === 1 ? 'course en cours' : 'courses en cours';
   return `${count} ${noun}`;
 }
 
-export default function AvailableOrdersScreen() {
+export default function MyOrdersMapScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
-  const [orders, setOrders] = useState<AvailableOrder[] | null>(null);
+  const { width, height } = useWindowDimensions();
+  const [orders, setOrders] = useState<DriverOrder[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [zoneId, setZoneId] = useState<string | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [mapReady, setMapReady] = useState(false);
   const [cardHeight, setCardHeight] = useState(0);
-  const listRef = useRef<FlatList<AvailableOrder>>(null);
+  // Tracés préchargés pour toutes les commandes visibles, indexés par
+  // orderId — pas un seul état pour "la commande sélectionnée", pour que
+  // changer de card dans le carrousel soit instantané (simple lecture du
+  // cache) plutôt que d'attendre un aller-retour OSRM à chaque swipe.
+  const [routeGeometryByOrderId, setRouteGeometryByOrderId] = useState<Record<string, OrderRouteGeometry>>({});
+  const listRef = useRef<FlatList<DriverOrder>>(null);
   const cameraRef = useRef<CameraRef>(null);
+  // Conserver cette position dans la séquence des hooks : elle existe depuis
+  // l'écran Carte initial et évite un désalignement lors du Fast Refresh.
   const { available } = useAvailability();
   // true seulement après qu'un fitBounds (ou un easeTo de secours pour 0/1
   // commande) a été appliqué pour la liste courante — évite que l'effet de
@@ -99,12 +132,11 @@ export default function AvailableOrdersScreen() {
   const load = useCallback(async () => {
     setError(null);
     try {
-      const profile = await api.getMyDriverProfile();
-      setZoneId(profile.zoneId);
-      const availableOrders = await api.getAvailableOrders(profile.zoneId);
-      setOrders(availableOrders);
+      const { orders: myOrders } = await api.getMyOrders();
+      setOrders(myOrders.filter((order) => ACTIVE_STATUSES.has(order.status)));
+      syncLocationTrackingProfile(myOrders);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Impossible de charger les commandes disponibles.');
+      setError(err instanceof ApiError ? err.message : 'Impossible de charger vos courses en cours.');
     }
   }, []);
 
@@ -114,54 +146,81 @@ export default function AvailableOrdersScreen() {
     }, [load])
   );
 
-  // Recale la sélection si la liste se réduit (order_taken) pendant que la
-  // dernière card du carrousel est affichée.
+  // Recale la sélection si la liste se réduit (livraison terminée pendant
+  // que la dernière card du carrousel est affichée).
   useEffect(() => {
     if (orders !== null && selectedIndex >= orders.length) {
       setSelectedIndex(Math.max(0, orders.length - 1));
     }
   }, [orders, selectedIndex]);
 
-  // Temps réel : identique au flux déjà branché à l'étape 6, seule la cible
-  // de rendu change (carrousel + marqueurs au lieu d'une FlatList verticale).
+  // Précharge le tracé pickup → livraison de TOUTES les commandes visibles
+  // dès que la liste change (pas seulement celle sélectionnée). Best-effort
+  // par commande : l'échec d'un tracé (OSRM indisponible, réseau) n'empêche
+  // pas les autres de se charger, laisse juste cette commande sans tracé.
   useEffect(() => {
-    if (zoneId === null) return;
+    if (visibleOrders.length === 0) return;
+    let cancelled = false;
+    void Promise.allSettled(
+      visibleOrders.map(async (order) => {
+        const { geometry } = await api.getOrderRoute(order.id);
+        return [order.id, geometry] as const;
+      })
+    ).then((results) => {
+      if (cancelled) return;
+      const loaded = Object.fromEntries(
+        results.flatMap((result) => (result.status === 'fulfilled' ? [result.value] : []))
+      );
+      setRouteGeometryByOrderId((current) => ({ ...current, ...loaded }));
+    });
+    return () => {
+      cancelled = true;
+    };
+    // orders (pas visibleOrders) est la dépendance stable — même raison que
+    // les effets caméra ci-dessous.
+  }, [orders]);
 
+  const selectedRouteGeometry = visibleOrders[selectedIndex] !== undefined
+    ? (routeGeometryByOrderId[visibleOrders[selectedIndex]!.id] ?? null)
+    : null;
+
+  // Cas rare mais possible : une de mes courses repasse disponible puis est
+  // reprise par un autre livreur pendant que je suis sur cet onglet —
+  // order_taken porte alors un driverId différent du mien, il faut la
+  // retirer de ma liste (même garde que app/(tabs)/orders/index.tsx). On
+  // ignore l'event si driverId === mon id, mon propre flow accept/collect/
+  // complete recharge déjà via le focus effect ci-dessus.
+  useEffect(() => {
     let cancelled = false;
     let activeSocket: Socket | null = null;
+    let myDriverId: string | null = null;
 
-    function handleNewOrder() {
-      void load();
-    }
-
-    function handleOrderTaken(payload: { orderId?: string }) {
-      if (typeof payload.orderId !== 'string') return;
+    function handleOrderTaken(payload: { orderId?: string; driverId?: string }) {
+      if (typeof payload.orderId !== 'string' || payload.driverId === myDriverId) return;
       const takenId = payload.orderId;
       setOrders((current) => (current === null ? current : current.filter((order) => order.id !== takenId)));
     }
 
-    function handleReconnect() {
-      void load();
+    async function setup() {
+      const [{ data: sessionData }, profile] = await Promise.all([supabase.auth.getSession(), api.getMyDriverProfile()]);
+      const token = sessionData.session?.access_token;
+      myDriverId = sessionData.session?.user.id ?? null;
+      if (token === undefined || cancelled) return;
+      activeSocket = getSocket(profile.zoneId, token);
+      activeSocket.on('order_taken', handleOrderTaken);
     }
 
-    void supabase.auth.getSession().then(({ data }) => {
-      const token = data.session?.access_token;
-      if (token === undefined || cancelled) return;
-      activeSocket = getSocket(zoneId, token);
-      activeSocket.on('new_order', handleNewOrder);
-      activeSocket.on('order_taken', handleOrderTaken);
-      activeSocket.io.on('reconnect', handleReconnect);
+    void setup().catch(() => {
+      // Le chargement de l'écran possède déjà son propre état d'erreur. Une
+      // indisponibilité API ponctuelle ne doit pas remonter comme promesse non
+      // gérée depuis le branchement socket.
     });
 
     return () => {
       cancelled = true;
-      if (activeSocket !== null) {
-        activeSocket.off('new_order', handleNewOrder);
-        activeSocket.off('order_taken', handleOrderTaken);
-        activeSocket.io.off('reconnect', handleReconnect);
-      }
+      activeSocket?.off('order_taken', handleOrderTaken);
     };
-  }, [zoneId, load]);
+  }, []);
 
   // Recalculée seulement quand ses entrées primitives changent (pas un objet
   // recréé à chaque rendu) — utilisée comme dépendance d'effet ci-dessous.
@@ -170,7 +229,7 @@ export default function AvailableOrdersScreen() {
   // (BottomTabView d'expo-router) place la tab bar en flux normal, sibling
   // de la zone d'écrans (flex: 1) — le bas de cet écran correspond déjà au
   // haut de la tab bar, cet espace est déjà exclu, l'ajouter ici le
-  // compterait une deuxième fois (bug constaté : card quasi centrée).
+  // compterait une deuxième fois.
   const cameraPadding = useMemo(
     () => ({
       top: insets.top + CAMERA_TOP_MARGIN,
@@ -180,32 +239,36 @@ export default function AvailableOrdersScreen() {
     }),
     [insets.top, cardHeight]
   );
+  // Miroir de cameraPadding lu par le cadrage global ci-dessous SANS être une
+  // dépendance de son effet — cardHeight (donc cameraPadding) change à
+  // chaque commande sélectionnée (texte de card différent), ce qui
+  // redéclenchait ce cadrage global et écrasait le cadrage pickup+livraison
+  // de la sélection fait par l'effet suivant.
+  const cameraPaddingRef = useRef(cameraPadding);
+  cameraPaddingRef.current = cameraPadding;
 
   // Cadrage global : se déclenche au chargement de la carte et à chaque
-  // changement réel de la liste de commandes (nouvelle commande, commande
-  // prise par quelqu'un d'autre, rechargement) — jamais sur un simple
-  // changement de sélection dans le carrousel (voir l'effet suivant).
+  // changement réel de la liste de commandes — jamais sur un simple
+  // changement de sélection dans le carrousel (voir l'effet suivant), ni sur
+  // un changement de padding seul (voir cameraPaddingRef ci-dessus).
   useEffect(() => {
     canFollowSelectionRef.current = false;
     if (!mapReady) return;
 
+    const padding = cameraPaddingRef.current;
     const bounds = computeBounds(visibleOrders);
     if (bounds !== null) {
-      cameraRef.current?.fitBounds(bounds, { padding: cameraPadding, duration: FIT_BOUNDS_DURATION });
+      cameraRef.current?.fitBounds(bounds, { padding, duration: FIT_BOUNDS_DURATION });
       canFollowSelectionRef.current = true;
     } else if (visibleOrders.length === 1) {
       const [only] = visibleOrders;
-      cameraRef.current?.easeTo({
-        center: [only!.pickupLng, only!.pickupLat],
-        zoom: SINGLE_ORDER_ZOOM,
-        padding: cameraPadding,
-        duration: FIT_BOUNDS_DURATION
-      });
+      const camera = computeOrderCamera(only!, width, height, padding);
+      cameraRef.current?.easeTo({ ...camera, padding, duration: FIT_BOUNDS_DURATION });
       canFollowSelectionRef.current = true;
     }
     // visibleOrders est dérivé de `orders` à chaque rendu (pas de useMemo) —
     // orders est la dépendance stable à surveiller, pas visibleOrders.
-  }, [mapReady, orders, cameraPadding]);
+  }, [mapReady, orders, width, height]);
 
   // Suit la sélection du carrousel (swipe, flèche ou tap marqueur) en
   // gardant le même padding, pour que le marqueur actif reste toujours
@@ -215,12 +278,9 @@ export default function AvailableOrdersScreen() {
     if (!canFollowSelectionRef.current) return;
     const order = visibleOrders[selectedIndex];
     if (order === undefined) return;
-    cameraRef.current?.easeTo({
-      center: [order.pickupLng, order.pickupLat],
-      padding: cameraPadding,
-      duration: EASE_TO_DURATION
-    });
-  }, [selectedIndex]);
+    const camera = computeOrderCamera(order, width, height, cameraPadding);
+    cameraRef.current?.easeTo({ ...camera, padding: cameraPadding, duration: EASE_TO_DURATION });
+  }, [selectedIndex, cameraPadding, width, height]);
 
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 60 }).current;
   const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
@@ -232,8 +292,7 @@ export default function AvailableOrdersScreen() {
 
   // Point d'entrée unique pour tout ce qui doit déplacer le carrousel vers
   // un index donné — swipe (via onViewableItemsChanged ci-dessus), tap sur
-  // un marqueur, ou tap sur une flèche du header (Fix 2 : "même effet que
-  // swipe").
+  // un marqueur, ou tap sur une flèche du header.
   function moveToIndex(index: number) {
     if (index < 0 || index >= visibleOrders.length) return;
     setSelectedIndex(index);
@@ -244,17 +303,8 @@ export default function AvailableOrdersScreen() {
     moveToIndex(visibleOrders.findIndex((order) => order.id === orderId));
   }
 
-  function openDetail(order: AvailableOrder) {
+  function openDetail(order: DriverOrder) {
     router.push({ pathname: '/order/[id]', params: { id: order.id, order: JSON.stringify(order) } });
-  }
-
-  async function handleAssign(order: AvailableOrder): Promise<void> {
-    await api.assignOrder(order.id, order.version);
-  }
-
-  function handleAssignSuccess(): void {
-    showToast('Course prise ✓');
-    void load();
   }
 
   function handleCardZoneLayout(event: LayoutChangeEvent) {
@@ -304,10 +354,20 @@ export default function AvailableOrdersScreen() {
         <Camera
           ref={cameraRef}
           initialViewState={{ center: BOURG_EN_BRESSE_CENTER, zoom: INITIAL_ZOOM }}
-          minZoom={12}
-          maxZoom={15}
+          minZoom={MIN_ZOOM}
+          maxZoom={MAX_ZOOM}
           maxBounds={[5.10, 46.10, 5.40, 46.32]}
         />
+        {selectedRouteGeometry !== null && (
+          <GeoJSONSource id="order-route-source" data={{ type: 'Feature', properties: {}, geometry: selectedRouteGeometry }}>
+            <Layer
+              id="order-route-line"
+              type="line"
+              layout={{ 'line-cap': 'round', 'line-join': 'round' }}
+              paint={{ 'line-color': BLUE_500, 'line-width': 3, 'line-opacity': 0.8 }}
+            />
+          </GeoJSONSource>
+        )}
         {visibleOrders.map((order, index) => (
           <Marker
             key={order.id}
@@ -320,10 +380,24 @@ export default function AvailableOrdersScreen() {
             </View>
           </Marker>
         ))}
+        {/* Point de livraison affiché uniquement pour la commande sélectionnée
+            dans le carrousel — l'afficher pour toutes les commandes en même
+            temps surchargerait la carte quand plusieurs sont en cours. */}
+        {visibleOrders[selectedIndex] !== undefined && (
+          <Marker
+            key={`delivery-${visibleOrders[selectedIndex]!.id}`}
+            id={`delivery-${visibleOrders[selectedIndex]!.id}`}
+            lngLat={[visibleOrders[selectedIndex]!.deliveryLng, visibleOrders[selectedIndex]!.deliveryLat]}
+          >
+            <View style={styles.markerHitArea}>
+              <View style={styles.deliveryMarker} />
+            </View>
+          </Marker>
+        )}
       </Map>
 
       {/* Bloc blanc unifié : safe area top + header navigation, un seul
-          conteneur continu au-dessus de la carte (Fix 1 + Fix 2). */}
+          conteneur continu au-dessus de la carte. */}
       <View className="absolute left-0 right-0 top-0 z-10 bg-white" style={{ paddingTop: insets.top }}>
         <View className="h-14 flex-row items-center px-1">
           <Pressable
@@ -352,7 +426,7 @@ export default function AvailableOrdersScreen() {
 
       <AvailabilityToggle />
 
-      {/* Card flottante sur la carte (Fix 4), au-dessus du tab bar. Pas de
+      {/* Card flottante sur la carte, au-dessus du tab bar. Pas de
           TAB_BAR_HEIGHT/insets.bottom ici : le bas de cet écran est déjà
           au-dessus de la tab bar (flux normal du Tab Navigator, pas un
           overlay) — voir le commentaire sur cameraPadding plus haut. */}
@@ -365,24 +439,16 @@ export default function AvailableOrdersScreen() {
           bottom: CARD_BOTTOM_MARGIN
         }}
       >
-        {!available ? (
+        {visibleOrders.length === 0 ? (
           <View className="w-[90%] self-center rounded-2xl border border-border bg-surface p-3 shadow-sm">
             <View className="items-center gap-1">
               <MapPin size={20} color={EMERALD_600} />
-              <Text className="text-center font-sans-semibold text-sm text-stone-800">Vous êtes indisponible</Text>
+              <Text className="text-center font-sans-semibold text-sm text-stone-800">Aucune course en cours</Text>
               <Text className="text-center font-sans text-sm text-stone-500">
-                Activez le toggle en haut pour voir les courses de votre zone
+                {available
+                  ? 'Restez disponible pour recevoir une proposition de course'
+                  : 'Mettez-vous disponible pour recevoir des commandes'}
               </Text>
-            </View>
-          </View>
-        ) : visibleOrders.length === 0 ? (
-          <View className="w-[90%] self-center rounded-2xl border border-border bg-surface p-3 shadow-sm">
-            <View className="items-center gap-1">
-              <MapPin size={20} color={EMERALD_600} />
-              <Text className="text-center font-sans-semibold text-sm text-stone-800">
-                Aucune course disponible dans votre zone
-              </Text>
-              <Text className="text-center font-sans text-sm text-stone-500">Revenez plus tard</Text>
             </View>
           </View>
         ) : (
@@ -400,19 +466,7 @@ export default function AvailableOrdersScreen() {
             renderItem={({ item }) => (
               <View style={{ width }}>
                 <View className="w-[90%] self-center">
-                  <OrderCard
-                    order={item}
-                    merchantName={item.merchantName}
-                    truncateAddresses
-                    onPress={() => openDetail(item)}
-                    footer={
-                      <SliderButton
-                        label="Glisser pour prendre →"
-                        onComplete={() => handleAssign(item)}
-                        onSuccess={handleAssignSuccess}
-                      />
-                    }
-                  />
+                  <OrderCard order={item} merchantName={item.merchantName} truncateAddresses onPress={() => openDetail(item)} />
                 </View>
               </View>
             )}
@@ -446,5 +500,14 @@ const styles = StyleSheet.create({
   },
   markerInactive: {
     opacity: MARKER_INACTIVE_OPACITY
+  },
+  deliveryMarker: {
+    width: MARKER_SIZE,
+    height: MARKER_SIZE,
+    borderRadius: MARKER_SIZE / 2,
+    backgroundColor: BLUE_500,
+    opacity: 0.7,
+    borderWidth: 3,
+    borderColor: WHITE
   }
 });

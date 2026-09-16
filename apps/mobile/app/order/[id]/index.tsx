@@ -1,10 +1,11 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Bike, CalendarDays, CircleX, Clock, Euro, MapPin, PackageCheck, Phone, Route, Store, Undo2, X } from 'lucide-react-native';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
+import { useState } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { SliderButton } from '../../../components/SliderButton';
 import { api } from '../../../lib/api';
-import { EMERALD_600, STONE_500 } from '../../../lib/colors';
+import { EMERALD_600, STONE_500, WHITE } from '../../../lib/colors';
 import {
   formatDistanceKm,
   formatDurationMin,
@@ -82,6 +83,7 @@ export default function OrderDetailModal() {
   const router = useRouter();
   const { order: orderParam } = useLocalSearchParams<{ id: string; order?: string }>();
   const order = parseOrder(orderParam);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   async function handleAssign() {
     if (order === null) return;
@@ -91,6 +93,39 @@ export default function OrderDetailModal() {
   function handleSuccess() {
     showToast('Course prise ✓');
     router.back();
+  }
+
+  async function handleCollect() {
+    if (order === null) return;
+    setIsSubmitting(true);
+    try {
+      await api.collectOrder(order.id, order.version);
+      showToast('Collecte confirmée ✓');
+      router.back();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Impossible de confirmer la collecte.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  function handleComplete() {
+    if (order === null) return;
+    router.push({ pathname: '/order/[id]/proof', params: { id: order.id, version: String(order.version) } });
+  }
+
+  async function handleConfirmReturn() {
+    if (order === null) return;
+    setIsSubmitting(true);
+    try {
+      await api.confirmReturn(order.id, order.version);
+      showToast('Retour confirmé ✓');
+      router.back();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Impossible de confirmer le retour.');
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   if (order === null) {
@@ -253,6 +288,38 @@ export default function OrderDetailModal() {
       {order.status === 'AVAILABLE' && (
         <View className="px-page-mobile pb-6 pt-2">
           <SliderButton label="Glisser pour prendre →" onComplete={handleAssign} onSuccess={handleSuccess} />
+        </View>
+      )}
+      {order.status === 'ASSIGNED' && (
+        <View className="px-page-mobile pb-6 pt-2">
+          <Pressable
+            onPress={() => void handleCollect()}
+            disabled={isSubmitting}
+            className="h-touch-comfortable items-center justify-center rounded-lg bg-primary-600 active:bg-primary-700 disabled:opacity-50"
+          >
+            {isSubmitting ? <ActivityIndicator color={WHITE} /> : <Text className="font-sans-bold text-body-lg text-white">J&apos;ai collecté le colis</Text>}
+          </Pressable>
+        </View>
+      )}
+      {order.status === 'COLLECTED' && (
+        <View className="px-page-mobile pb-6 pt-2">
+          <Pressable
+            onPress={handleComplete}
+            className="h-touch-comfortable items-center justify-center rounded-lg bg-primary-600 active:bg-primary-700"
+          >
+            <Text className="font-sans-bold text-body-lg text-white">Livraison effectuée</Text>
+          </Pressable>
+        </View>
+      )}
+      {order.status === 'RETURNING' && (
+        <View className="px-page-mobile pb-6 pt-2">
+          <Pressable
+            onPress={() => void handleConfirmReturn()}
+            disabled={isSubmitting}
+            className="h-touch-comfortable items-center justify-center rounded-lg bg-red-600 active:bg-red-700 disabled:opacity-50"
+          >
+            {isSubmitting ? <ActivityIndicator color={WHITE} /> : <Text className="font-sans-bold text-body-lg text-white">J&apos;ai retourné le colis</Text>}
+          </Pressable>
         </View>
       )}
     </SafeAreaView>

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
 import { PG_FOREIGN_KEY_VIOLATION, pgErrorCode } from '../../../platform/pg-error.js'
 import { inTransaction } from '../../../platform/transaction.js'
@@ -24,6 +25,8 @@ import type { OrderEvent } from '../domain/order-event.js'
 import type { OrderStatus } from '../domain/order-status.js'
 import type { ProofOfDeliveryAsset } from '../domain/proof-of-delivery.js'
 import type { CreateOrderInput, OrderRepository } from '../ports/order-repository.js'
+import type { OrderTrackingRecord } from '../ports/order-tracking-repository.js'
+import { GROUPAGE_WINDOW_MINUTES } from '../domain/dispatch.js'
 
 type OrderRow = {
   id: string
@@ -61,9 +64,13 @@ type OrderRow = {
   delivery_code_locked_at: Date | null
   created_at: Date
   updated_at: Date
+  metadata?: {
+    dispatch_failed?: unknown
+  }
 }
 
 type MerchantOrderRow = OrderRow & {
+  tracking_token: string
   driver_name: string | null
   driver_phone: string | null
 }
@@ -187,7 +194,7 @@ const driverOrderSelect = `
     o.delivery_address, o.delivery_lat, o.delivery_lng,
     o.distance_m, o.duration_s, o.price_cents, o.delivery_proof_method, o.driver_earning_cents,
     o.assigned_at, o.collected_at, o.completed_at, o.created_at, o.updated_at,
-    m.name as merchant_name, m.phone as merchant_phone
+    m.name as merchant_name, coalesce(m.phone_landline, m.phone_mobile) as merchant_phone
   from orders o
   join merchants m on m.id = o.merchant_id`
 
@@ -198,10 +205,12 @@ function mapMerchantOrder(
 ): MerchantOrder {
   const order: MerchantOrder = {
     ...mapOrder(row),
+    trackingToken: row.tracking_token,
     events,
     driverName: row.driver_name,
     driverPhone: row.driver_phone,
-    proofAsset
+    proofAsset,
+    dispatchFailed: row.metadata?.dispatch_failed === true
   }
   // TODO: TWILIO — temporary plaintext display for the owning merchant only.
   // Never expose the bcrypt hash, and never compare this value for verification.
@@ -338,6 +347,80 @@ export class PostgresOrderRepository implements OrderRepository {
     return row === undefined ? null : mapOrder(row)
   }
 
+  public async findDispatchMetadata(orderId: string): Promise<import('../domain/dispatch.js').DispatchMetadata | null> {
+    const result = await this.pool.query<{ metadata: { dispatch_attempts?: unknown; dispatch_radius_km?: unknown; dispatch_failed?: unknown } }>(
+      'select metadata from orders where id = $1', [orderId]
+    )
+    const row = result.rows[0]
+    if (row === undefined) return null
+    const attempts = Array.isArray(row.metadata.dispatch_attempts) ? row.metadata.dispatch_attempts : []
+    return {
+      dispatchAttempts: attempts.filter((attempt): attempt is import('../domain/dispatch.js').DispatchAttempt =>
+        typeof attempt === 'object' && attempt !== null &&
+        typeof (attempt as { driverId?: unknown }).driverId === 'string' &&
+        ((attempt as { reason?: unknown }).reason === 'refused' || (attempt as { reason?: unknown }).reason === 'timeout') &&
+        typeof (attempt as { round?: unknown }).round === 'number' &&
+        typeof (attempt as { refusedAt?: unknown }).refusedAt === 'string'
+      ),
+      dispatchRadiusKm: typeof row.metadata.dispatch_radius_km === 'number' ? row.metadata.dispatch_radius_km : null,
+      dispatchFailed: row.metadata.dispatch_failed === true
+    }
+  }
+
+  public async findStuckAvailableOrders(olderThanMinutes: number): Promise<{ orderId: string; merchantId: string }[]> {
+    const result = await this.pool.query<{ order_id: string; merchant_id: string }>(
+      `select o.id as order_id, o.merchant_id
+       from orders o
+       where o.status = 'AVAILABLE' and o.driver_id is null
+         and o.updated_at <= now() - ($1::text || ' minutes')::interval
+         and coalesce((o.metadata->>'dispatch_failed')::boolean, false) = false`,
+      [olderThanMinutes]
+    )
+    return result.rows.map((row) => ({ orderId: row.order_id, merchantId: row.merchant_id }))
+  }
+
+  public async findTrackingByToken(token: string): Promise<OrderTrackingRecord | null> {
+    const result = await this.pool.query<{
+      status: OrderStatus
+      assigned_at: Date | null
+      collected_at: Date | null
+      completed_at: Date | null
+      duration_s: number
+      lat: number | null
+      lng: number | null
+    }>(
+      `select o.status, o.assigned_at, o.collected_at, o.completed_at, o.duration_s, location.lat, location.lng
+       from orders o
+       left join lateral (
+         select lat, lng from driver_locations
+         where driver_id = o.driver_id
+         order by recorded_at desc, id desc
+         limit 1
+       ) location on o.status in ('ASSIGNED', 'COLLECTED')
+       where o.tracking_token = $1`,
+      [token]
+    )
+    const row = result.rows[0]
+    if (row === undefined) return null
+    return {
+      status: row.status,
+      assignedAt: row.assigned_at,
+      collectedAt: row.collected_at,
+      completedAt: row.completed_at,
+      durationS: row.duration_s,
+      driverPosition: row.lat === null || row.lng === null ? null : { lat: row.lat, lng: row.lng }
+    }
+  }
+
+  public async findActiveTrackingTokensByDriverId(driverId: string): Promise<readonly string[]> {
+    const result = await this.pool.query<{ tracking_token: string }>(
+      `select tracking_token from orders
+       where driver_id = $1 and status in ('ASSIGNED', 'COLLECTED')`,
+      [driverId]
+    )
+    return result.rows.map((row) => row.tracking_token)
+  }
+
   public async findByMerchantId(merchantId: string): Promise<MerchantOrder[]> {
     const ordersResult = await this.pool.query<MerchantOrderRow>(
       `select o.*, d.name as driver_name, d.phone as driver_phone
@@ -399,6 +482,97 @@ export class PostgresOrderRepository implements OrderRepository {
       [zoneId]
     )
     return result.rows.map(mapDriverOrder)
+  }
+
+  public async findDriverOrderById(orderId: string): Promise<DriverOrder | null> {
+    const result = await this.pool.query<DriverOrderRow>(
+      `${driverOrderSelect}
+       where o.id = $1`,
+      [orderId]
+    )
+    const row = result.rows[0]
+    return row === undefined ? null : mapDriverOrder(row)
+  }
+
+  public async findDriversWithActiveOrderForMerchant(
+    merchantId: string,
+    targetPickupAt: Date
+  ): Promise<{ driverId: string; orderId: string; pickupScheduledAt: Date | null }[]> {
+    const result = await this.pool.query<{
+      driver_id: string
+      order_id: string
+      pickup_scheduled_at: Date | null
+    }>(
+      `select driver_id, id as order_id, pickup_scheduled_at
+       from orders
+       where merchant_id = $1
+         and driver_id is not null
+         and status in ('ASSIGNED', 'COLLECTED')
+         and pickup_scheduled_at is not null
+         and abs(extract(epoch from (pickup_scheduled_at - $2::timestamptz))) < $3 * 60`,
+      [merchantId, targetPickupAt, GROUPAGE_WINDOW_MINUTES]
+    )
+    return result.rows.map((row) => ({
+      driverId: row.driver_id,
+      orderId: row.order_id,
+      pickupScheduledAt: row.pickup_scheduled_at
+    }))
+  }
+
+  public async recordDispatchAttempt(
+    orderId: string,
+    attempt: { driverId: string; reason: 'refused' | 'timeout'; round: number; refusedAt: Date },
+    expectedVersion: number
+  ): Promise<Order> {
+    const result = await this.pool.query<OrderRow>(
+      `update orders
+       set metadata = jsonb_set(
+             metadata,
+             '{dispatch_attempts}',
+             coalesce(metadata->'dispatch_attempts', '[]'::jsonb) || jsonb_build_array(
+               jsonb_build_object(
+                 'driverId', $2,
+                 'reason', $3,
+                 'round', $4,
+                 'refusedAt', $5::timestamptz
+               )
+             ),
+             true
+           ),
+           version = version + 1,
+           updated_at = now()
+       where id = $1 and version = $6
+       returning *`,
+      [orderId, attempt.driverId, attempt.reason, attempt.round, attempt.refusedAt, expectedVersion]
+    )
+    if (result.rowCount !== 1 || result.rows[0] === undefined) {
+      throw new OrderConflictError(`Order ${orderId} dispatch metadata could not be updated`)
+    }
+    return mapOrder(result.rows[0])
+  }
+
+  public async markDispatchFailed(orderId: string, expectedVersion: number): Promise<Order> {
+    return inTransaction(this.pool, async (client) => {
+      const result = await client.query<OrderRow>(
+        `update orders
+         set metadata = jsonb_set(metadata, '{dispatch_failed}', 'true'::jsonb, true),
+             version = version + 1,
+             updated_at = now()
+         where id = $1 and version = $2
+         returning *`,
+        [orderId, expectedVersion]
+      )
+      const row = result.rows[0]
+      if (result.rowCount !== 1 || row === undefined) {
+        throw new OrderConflictError(`Order ${orderId} dispatch failure could not be recorded`)
+      }
+      await client.query(
+        `insert into outbox_event (event_type, aggregate_type, aggregate_id, aggregate_version, payload, correlation_id)
+         values ('order.dispatch_failed.v1', 'order', $1, $2, $3::jsonb, $4)`,
+        [row.id, row.version, JSON.stringify({ orderId: row.id, merchantId: row.merchant_id }), randomUUID()]
+      )
+      return mapOrder(row)
+    })
   }
 
   public async findActiveByDriverId(driverId: string): Promise<DriverOrder[]> {

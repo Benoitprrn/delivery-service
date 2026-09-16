@@ -13,6 +13,7 @@
     ],
     "android": {
       "package": "com.deliveryservice.driver",
+      "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "backgroundColor": "#FDFCF8",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -37,8 +38,15 @@
         }
       ],
       "expo-secure-store",
+      "expo-notifications",
       "@maplibre/maplibre-react-native",
-      "expo-location"
+      [
+        "expo-location",
+        {
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

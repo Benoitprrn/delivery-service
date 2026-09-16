@@ -24,7 +24,9 @@ function sendForbidden(reply: FastifyReply, correlationId: string): FastifyReply
 function merchantResponse(merchant: Awaited<ReturnType<MerchantsHttpRoutesOptions['merchants']['getMerchant']>>) {
   return {
     name: merchant.name,
-    phone: merchant.phone,
+    phoneLandline: merchant.phoneLandline,
+    phoneMobile: merchant.phoneMobile,
+    logoUrl: merchant.logoUrl,
     address: merchant.address,
     lat: merchant.lat,
     lng: merchant.lng
@@ -60,6 +62,19 @@ export async function registerMerchantHttpRoutes(
       }
       const body = updateMerchantBodySchema.parse(request.body)
       const merchant = await options.merchants.updateMerchant(request.authUser.id, body)
+      return reply.code(200).send(merchantResponse(merchant))
+    } catch (error) {
+      return sendMappedError(request, reply, error)
+    }
+  })
+
+  app.post('/api/v1/merchants/me/logo', async (request, reply) => {
+    try {
+      if (request.authUser === undefined) throw new Error('Authenticated user is missing')
+      if (request.authUser.role !== 'merchant') return sendForbidden(reply, request.correlationId)
+      const file = await request.file()
+      if (file === undefined) return reply.code(400).send({ error: 'ValidationError', message: 'Logo file is required', correlationId: request.correlationId })
+      const merchant = await options.merchants.uploadLogo(request.authUser.id, await file.toBuffer(), file.mimetype)
       return reply.code(200).send(merchantResponse(merchant))
     } catch (error) {
       return sendMappedError(request, reply, error)

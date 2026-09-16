@@ -1,20 +1,35 @@
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Bike, CircleX, PackageCheck, Undo2 } from 'lucide-react-native';
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { ActivityIndicator, FlatList, Pressable, RefreshControl, Text, View } from 'react-native';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { FlatList, Pressable, RefreshControl, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { Socket } from 'socket.io-client';
 import { EmptyState, ErrorState, LoadingState } from '../../../components/list-state';
 import { OrderCard } from '../../../components/order-card';
+import { OrderTimeline } from '../../../components/order-timeline';
 import { api, ApiError } from '../../../lib/api';
+import { syncLocationTrackingProfile } from '../../../lib/location-tracking';
 import { EMERALD_600, WHITE } from '../../../lib/colors';
 import { formatPriceEuros } from '../../../lib/format';
 import type { DriverHistoryOrder, DriverOrder } from '../../../lib/orders-types';
 import { getSocket } from '../../../lib/socket';
 import { supabase } from '../../../lib/supabase';
-import { showToast } from '../../../lib/toast';
 
 type OrdersTab = 'active' | 'history';
+
+function isFromTodayInParis(isoDate: string | null): boolean {
+  if (isoDate === null) return false;
+  const date = new Date(isoDate);
+  if (Number.isNaN(date.getTime())) return false;
+
+  const dayFormatter = new Intl.DateTimeFormat('fr-CA', {
+    timeZone: 'Europe/Paris',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  });
+  return dayFormatter.format(date) === dayFormatter.format(new Date());
+}
 
 function StatusBadge({ status }: { status: DriverOrder['status'] }) {
   if (status === 'ASSIGNED') {
@@ -78,11 +93,10 @@ export default function MyOrdersScreen() {
   const [activeOrders, setActiveOrders] = useState<DriverOrder[] | null>(null);
   const [historyOrders, setHistoryOrders] = useState<DriverHistoryOrder[] | null>(null);
   const [activeTab, setActiveTab] = useState<OrdersTab>('active');
-  const [displayedTab, setDisplayedTab] = useState<OrdersTab>('active');
-  const [isTabSwitching, setIsTabSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [submittingId, setSubmittingId] = useState<string | null>(null);
+  const [currentNodeY, setCurrentNodeY] = useState<number | null>(null);
+  const listRef = useRef<FlatList<DriverHistoryOrder>>(null);
 
   const load = useCallback(async (isRefresh: boolean) => {
     if (isRefresh) setIsRefreshing(true);
@@ -90,6 +104,7 @@ export default function MyOrdersScreen() {
     try {
       const [{ orders: myOrders }, { orders: history }] = await Promise.all([api.getMyOrders(), api.getMyOrderHistory()]);
       setActiveOrders(myOrders);
+      syncLocationTrackingProfile(myOrders);
       setHistoryOrders(
         [...history].sort(
           (first, second) =>
@@ -140,7 +155,10 @@ export default function MyOrdersScreen() {
       activeSocket.on('order_taken', handleOrderTaken);
     }
 
-    void setup();
+    void setup().catch(() => {
+      // La liste gère déjà ses erreurs de chargement ; éviter une promesse
+      // socket non gérée lorsque l'API est momentanément indisponible.
+    });
 
     return () => {
       cancelled = true;
@@ -148,49 +166,9 @@ export default function MyOrdersScreen() {
     };
   }, []);
 
-  // Deux frames laissent le temps au loader d'être peint avant le montage des
-  // cards de l'autre onglet, qui peut être coûteux sur certains appareils.
-  useEffect(() => {
-    if (!isTabSwitching) return;
-
-    let secondFrame: ReturnType<typeof requestAnimationFrame> | null = null;
-    const firstFrame = requestAnimationFrame(() => {
-      secondFrame = requestAnimationFrame(() => {
-        setDisplayedTab(activeTab);
-        setIsTabSwitching(false);
-      });
-    });
-
-    return () => {
-      cancelAnimationFrame(firstFrame);
-      if (secondFrame !== null) cancelAnimationFrame(secondFrame);
-    };
-  }, [activeTab, isTabSwitching]);
-
   function switchTab(tab: OrdersTab) {
     if (tab === activeTab) return;
     setActiveTab(tab);
-    setIsTabSwitching(true);
-  }
-
-  async function handleCollect(order: DriverOrder) {
-    setSubmittingId(order.id);
-    try {
-      await api.collectOrder(order.id, order.version);
-      showToast('Collecte confirmée ✓');
-      await load(false);
-    } catch (err) {
-      if (err instanceof ApiError) showToast(err.message);
-    } finally {
-      setSubmittingId(null);
-    }
-  }
-
-  function handleComplete(order: DriverOrder) {
-    router.push({
-      pathname: '/order/[id]/proof',
-      params: { id: order.id, version: String(order.version) }
-    });
   }
 
   function openDetail(order: DriverOrder) {
@@ -200,18 +178,28 @@ export default function MyOrdersScreen() {
     });
   }
 
-  async function handleConfirmReturn(order: DriverOrder) {
-    setSubmittingId(order.id);
-    try {
-      await api.confirmReturn(order.id, order.version);
-      showToast('Retour confirmé ✓');
-      await load(false);
-    } catch (err) {
-      if (err instanceof ApiError) showToast(err.message);
-    } finally {
-      setSubmittingId(null);
-    }
-  }
+  const isHistory = activeTab === 'history';
+  const displayedOrders = isHistory ? historyOrders ?? [] : [];
+  // L'API des courses actives exclut volontairement COMPLETED/RETURNED/
+  // CANCELLED. On les réintègre ici uniquement lorsqu'elles ont été closes
+  // aujourd'hui, afin que la timeline raconte toute la journée du livreur.
+  // Une mise en indisponibilité reste sans effet : elle peut n'être qu'une
+  // pause et ne doit pas effacer le contexte de la tournée.
+  const todayFinishedOrders = (historyOrders ?? []).filter((order) => isFromTodayInParis(order.completedAt ?? order.updatedAt));
+  const timelineOrders: DriverOrder[] = [...(activeOrders ?? []), ...todayFinishedOrders];
+
+  // Cet effet doit rester avant les retours de chargement ci-dessous : React
+  // doit exécuter les mêmes hooks au premier rendu et après les réponses API.
+  useEffect(() => {
+    if (isHistory || currentNodeY === null) return;
+    const frame = requestAnimationFrame(() => {
+      // Le header est sticky : ne pas inclure sa hauteur dans l'offset, sinon
+      // il recouvrirait le nœud cible. À cet offset, le nœud arrive juste sous
+      // les toggles fixes.
+      listRef.current?.scrollToOffset({ offset: Math.max(0, currentNodeY - 8), animated: false });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [activeOrders, historyOrders, isHistory, currentNodeY]);
 
   if ((activeOrders === null || historyOrders === null) && error === null) {
     return (
@@ -229,97 +217,57 @@ export default function MyOrdersScreen() {
     );
   }
 
-  const isHistory = activeTab === 'history';
-  const displayedOrders = displayedTab === 'history' ? historyOrders ?? [] : activeOrders ?? [];
-
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
       <FlatList
-        data={isTabSwitching ? [] : displayedOrders}
+        ref={listRef}
+        data={displayedOrders}
         keyExtractor={(order) => order.id}
+        stickyHeaderIndices={[0]}
         contentContainerStyle={{ flexGrow: 1, gap: 12, paddingHorizontal: 16, paddingVertical: 16 }}
         refreshControl={
           <RefreshControl refreshing={isRefreshing} onRefresh={() => void load(true)} tintColor={EMERALD_600} />
         }
         ListHeaderComponent={
-          <View className="flex-row rounded-xl border border-border bg-surface p-1">
-            <Pressable
-              onPress={() => switchTab('active')}
-              className={`h-touch-comfortable flex-1 items-center justify-center rounded-lg ${!isHistory ? 'bg-primary-600' : ''}`}
-            >
-              <Text className={`font-sans-semibold text-body-lg ${!isHistory ? 'text-white' : 'text-stone-700'}`}>
-                En cours ({activeOrders?.length ?? 0})
-              </Text>
-            </Pressable>
-            <Pressable
-              onPress={() => switchTab('history')}
-              className={`h-touch-comfortable flex-1 items-center justify-center rounded-lg ${isHistory ? 'bg-primary-600' : ''}`}
-            >
-              <Text className={`font-sans-semibold text-body-lg ${isHistory ? 'text-white' : 'text-stone-700'}`}>
-                Historique ({historyOrders?.length ?? 0})
-              </Text>
-            </Pressable>
+          <View className="bg-background pb-3">
+            <View className="flex-row rounded-xl border border-border bg-surface p-1">
+              <Pressable
+                onPress={() => switchTab('active')}
+                className={`h-touch-comfortable flex-1 items-center justify-center rounded-lg ${!isHistory ? 'bg-primary-600' : ''}`}
+              >
+                <Text className={`font-sans-semibold text-body-lg ${!isHistory ? 'text-white' : 'text-stone-700'}`}>
+                  En cours ({activeOrders?.length ?? 0})
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={() => switchTab('history')}
+                className={`h-touch-comfortable flex-1 items-center justify-center rounded-lg ${isHistory ? 'bg-primary-600' : ''}`}
+              >
+                <Text className={`font-sans-semibold text-body-lg ${isHistory ? 'text-white' : 'text-stone-700'}`}>
+                  Historique ({historyOrders?.length ?? 0})
+                </Text>
+              </Pressable>
+            </View>
           </View>
         }
         ListEmptyComponent={
-          isTabSwitching ? (
-            <View className="items-center py-12">
-              <ActivityIndicator size="large" color={EMERALD_600} />
-            </View>
-          ) : (
+          isHistory ? (
             <EmptyState message={isHistory ? 'Aucune course dans votre historique' : 'Aucune course en cours'} />
+          ) : timelineOrders.length > 0 ? (
+            <OrderTimeline orders={timelineOrders} onPressOrder={openDetail} onCurrentNodeLayout={setCurrentNodeY} />
+          ) : (
+            <EmptyState message="Aucune course en cours" />
           )
         }
         renderItem={({ item }) => {
-          const isSubmitting = submittingId === item.id;
-          let footer: ReactNode;
-          if (isHistory) {
-            const historyOrder = item as DriverHistoryOrder;
-            footer = (
-              <View className="border-t border-border pt-3">
-                <Text className="text-center font-sans-semibold text-body-lg text-primary-700">
-                  Gains : {formatPriceEuros(historyOrder.driverEarningCents)}
-                </Text>
-              </View>
-            );
-          } else if (item.status === 'ASSIGNED') {
-            footer = (
-              <Pressable
-                onPress={() => void handleCollect(item)}
-                disabled={isSubmitting}
-                className="h-touch-comfortable flex-row items-center justify-center rounded-lg bg-primary-600 active:bg-primary-700 disabled:opacity-50"
-              >
-                {isSubmitting ? (
-                  <ActivityIndicator color={WHITE} />
-                ) : (
-                  <Text className="font-sans-bold text-body-lg text-white">J&apos;ai collecté le colis</Text>
-                )}
-              </Pressable>
-            );
-          } else if (item.status === 'COLLECTED') {
-            footer = (
-              <Pressable
-                onPress={() => handleComplete(item)}
-                className="h-touch-comfortable flex-row items-center justify-center rounded-lg bg-primary-600 active:bg-primary-700"
-              >
-                <Text className="font-sans-bold text-body-lg text-white">Livraison effectuée</Text>
-              </Pressable>
-            );
-          } else if (item.status === 'RETURNING') {
-            footer = (
-              <Pressable
-                onPress={() => void handleConfirmReturn(item)}
-                disabled={isSubmitting}
-                className="h-touch-comfortable flex-row items-center justify-center rounded-lg bg-red-600 active:bg-red-700 disabled:opacity-50"
-              >
-                {isSubmitting ? (
-                  <ActivityIndicator color={WHITE} />
-                ) : (
-                  <Text className="font-sans-bold text-body-lg text-white">J&apos;ai retourné le colis</Text>
-                )}
-              </Pressable>
-            );
-          }
+          const historyOrder = item as DriverHistoryOrder;
+          const footer: ReactNode = (
+            <View className="border-t border-border pt-3">
+              <Text className="text-center font-sans-semibold text-body-lg text-primary-700">
+                Gains : {formatPriceEuros(historyOrder.driverEarningCents)}
+              </Text>
+            </View>
+          );
           return (
             <OrderCard
               order={item}

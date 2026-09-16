@@ -1,8 +1,9 @@
 import { Tabs } from 'expo-router';
-import { Map, Package, Wallet } from 'lucide-react-native';
+import { Map, Package, UserRound } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { AvailabilityProvider } from '../../lib/availability-context';
+import { AvailabilityProvider, useAvailability } from '../../lib/availability-context';
 import { EMERALD_600, WHITE } from '../../lib/colors';
+import { useIncomingDispatchOffer } from '../../lib/dispatch-offer-context';
 import { useDriverLocationTracking } from '../../lib/location-tracking';
 
 const ICON_SIZE = 22;
@@ -12,12 +13,6 @@ const INACTIVE_COLOR = '#A8A29E'; // stone-400
 export default function TabsLayout() {
   const insets = useSafeAreaInsets();
 
-  // Tourne tant que ce layout est monté (donc tant que le livreur est
-  // authentifié, voir la garde du layout racine) — indépendant de l'onglet
-  // actif, pour que le suivi GPS survive à un passage sur "Mes courses"
-  // pendant une commande COLLECTED.
-  useDriverLocationTracking();
-
   return (
     <AvailabilityProvider>
       <TabsNavigator insets={insets} />
@@ -26,6 +21,20 @@ export default function TabsLayout() {
 }
 
 function TabsNavigator({ insets }: { insets: ReturnType<typeof useSafeAreaInsets> }) {
+  const { available } = useAvailability();
+
+  // Tourne tant que ce layout est monté (donc tant que le livreur est
+  // authentifié, voir la garde du layout racine) — indépendant de l'onglet
+  // actif, pour que le suivi GPS survive à un passage sur "Mes courses"
+  // pendant une commande COLLECTED. Doit vivre ICI (à l'intérieur
+  // d'AvailabilityProvider, pas dans TabsLayout au-dessus) pour pouvoir lire
+  // `available` — un livreur indisponible n'émet aucune position (voir
+  // location-tracking.ts).
+  useDriverLocationTracking(available);
+  // Idem : une offre de dispatch doit ouvrir l'écran de décision quel que
+  // soit l'onglet actif au moment où elle arrive.
+  useIncomingDispatchOffer();
+
   return (
     <Tabs
       screenOptions={{
@@ -66,12 +75,14 @@ function TabsNavigator({ insets }: { insets: ReturnType<typeof useSafeAreaInsets
         }}
       />
       <Tabs.Screen
-        name="wallet/index"
+        name="compte/index"
         options={{
-          title: 'Wallet',
-          tabBarIcon: ({ color }) => <Wallet size={ICON_SIZE} color={color} />
+          title: 'Compte',
+          tabBarIcon: ({ color }) => <UserRound size={ICON_SIZE} color={color} />
         }}
       />
+      <Tabs.Screen name="compte/mon-compte" options={{ href: null }} />
+      <Tabs.Screen name="compte/wallet" options={{ href: null }} />
     </Tabs>
   );
 }

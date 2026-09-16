@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAvailability } from '../lib/availability-context';
@@ -19,17 +18,11 @@ const DOT_SIZE = 8;
 
 export function AvailabilityToggle() {
   const insets = useSafeAreaInsets();
-  const { available, resolving, toggle } = useAvailability();
-  const [pending, setPending] = useState(false);
+  const { available, resolving, updating, toggle } = useAvailability();
 
   async function handlePress() {
-    if (pending || resolving) return;
-    setPending(true);
-    try {
-      await toggle();
-    } finally {
-      setPending(false);
-    }
+    if (updating || resolving) return;
+    await toggle();
   }
 
   return (
@@ -39,11 +32,11 @@ export function AvailabilityToggle() {
     >
       <Pressable
         onPress={() => void handlePress()}
-        disabled={pending || resolving}
+        disabled={updating || resolving}
         className="flex-row items-center gap-1.5 rounded-full px-3 shadow-sm disabled:opacity-70"
         style={{ minHeight: MIN_HEIGHT, backgroundColor: available ? EMERALD_600 : STONE_200 }}
       >
-        {pending ? (
+        {updating ? (
           <ActivityIndicator size="small" color={available ? WHITE : STONE_500} />
         ) : (
           <View

@@ -12,4 +12,12 @@ export class PostgresDriverLocationRepository implements DriverLocationRepositor
       [location.driverId, location.lat, location.lng, location.recordedAt, location.expiresAt]
     )
   }
+
+  public async findLatestByDriverId(driverId: string): Promise<{ lat: number; lng: number } | null> {
+    const result = await this.pool.query<{ lat: number; lng: number }>(
+      `select lat, lng from driver_locations where driver_id = $1 order by recorded_at desc, id desc limit 1`,
+      [driverId]
+    )
+    return result.rows[0] ?? null
+  }
 }

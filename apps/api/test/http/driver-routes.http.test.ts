@@ -25,53 +25,10 @@ describe('driver HTTP authorization and identity scoping', () => {
     await app.close()
   })
 
-  it('uses the authenticated driver identity and rejects a supplied different driver id', async () => {
-    const assignOrder = vi.fn().mockResolvedValue({ id: orderId, status: 'ASSIGNED' })
-    await app.register(registerOrderHttpRoutes, {
-      orders: {
-        assignOrder,
-        collectOrder: vi.fn(),
-        completeOrder: vi.fn(),
-        returnOrder: vi.fn(),
-        confirmReturn: vi.fn(),
-        createOrder: vi.fn(),
-        estimateOrder: vi.fn(),
-        getMerchantOrders: vi.fn(),
-        getDriverOrders: vi.fn(),
-        getDriverHistory: vi.fn(),
-        getDriverEarnings: vi.fn(),
-        listAvailableOrders: vi.fn()
-      },
-      findMerchantById: vi.fn(),
-      findZoneById: vi.fn(),
-      findDriverById: vi.fn()
-    })
-
-    const forged = await app.inject({
-      method: 'POST',
-      url: `/api/v1/orders/${orderId}/assign`,
-      payload: { driverId: otherDriverId, expectedVersion: 1 }
-    })
-    expect(forged.statusCode).toBe(400)
-
-    const response = await app.inject({
-      method: 'POST',
-      url: `/api/v1/orders/${orderId}/assign`,
-      payload: { expectedVersion: 1 }
-    })
-    expect(response.statusCode).toBe(200)
-    expect(assignOrder).toHaveBeenCalledWith(
-      expect.objectContaining({
-        driverId: authenticatedDriverId,
-        actor: { type: 'driver', id: authenticatedDriverId }
-      })
-    )
-  })
-
   it('records location only for the authenticated driver and validates coordinates', async () => {
     const recordLocation = vi.fn().mockResolvedValue(undefined)
     await app.register(registerDriverHttpRoutes, {
-      drivers: { findDriverById: vi.fn(), recordLocation, setAvailability: vi.fn(), heartbeat: vi.fn(), isAvailable: vi.fn(), getLiveDriverProfile: vi.fn() }
+      drivers: { findDriverById: vi.fn(), findDriverIdsByZoneId: vi.fn(), findPushTokensByDriverIds: vi.fn(), registerPushToken: vi.fn(), recordLocation, setAvailability: vi.fn(), disconnect: vi.fn(), heartbeat: vi.fn(), isAvailable: vi.fn(), getLiveDriverProfile: vi.fn() }
     })
 
     const response = await app.inject({
@@ -92,6 +49,114 @@ describe('driver HTTP authorization and identity scoping', () => {
     expect(invalid.statusCode).toBe(400)
   })
 
+  it('ignores the legacy optional position when setting availability and returns the Valkey state', async () => {
+    const setAvailability = vi.fn().mockResolvedValue({ available: true })
+    const isAvailable = vi.fn().mockResolvedValue(true)
+    await app.register(registerDriverHttpRoutes, {
+      drivers: {
+        findDriverById: vi.fn(), findDriverIdsByZoneId: vi.fn(), findPushTokensByDriverIds: vi.fn(), registerPushToken: vi.fn(),
+        recordLocation: vi.fn(), setAvailability, disconnect: vi.fn(), heartbeat: vi.fn(), isAvailable, getLiveDriverProfile: vi.fn()
+      }
+    })
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/drivers/availability',
+      payload: { available: true, lat: 46.2058, lng: 5.2255 }
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual({ available: true })
+    expect(setAvailability).toHaveBeenCalledWith(authenticatedDriverId, true)
+    expect(isAvailable).toHaveBeenCalledWith(authenticatedDriverId)
+  })
+
+  it('accepts becoming available without coordinates', async () => {
+    const setAvailability = vi.fn()
+    await app.register(registerDriverHttpRoutes, {
+      drivers: {
+        findDriverById: vi.fn(), findDriverIdsByZoneId: vi.fn(), findPushTokensByDriverIds: vi.fn(), registerPushToken: vi.fn(),
+        recordLocation: vi.fn(), setAvailability, disconnect: vi.fn(), heartbeat: vi.fn(), isAvailable: vi.fn(), getLiveDriverProfile: vi.fn()
+      }
+    })
+
+    const response = await app.inject({ method: 'POST', url: '/api/v1/drivers/availability', payload: { available: true } })
+    expect(response.statusCode).toBe(200)
+    expect(setAvailability).toHaveBeenCalledWith(authenticatedDriverId, true)
+  })
+
+  it('registers a push token for the authenticated driver only', async () => {
+    const registerPushToken = vi.fn().mockResolvedValue(undefined)
+    await app.register(registerDriverHttpRoutes, {
+      drivers: {
+        findDriverById: vi.fn(), findDriverIdsByZoneId: vi.fn(), findPushTokensByDriverIds: vi.fn(), registerPushToken,
+        recordLocation: vi.fn(), setAvailability: vi.fn(), disconnect: vi.fn(), heartbeat: vi.fn(), isAvailable: vi.fn(), getLiveDriverProfile: vi.fn()
+      }
+    })
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/drivers/push-token',
+      payload: { token: 'ExponentPushToken[test-token]' }
+    })
+
+    expect(response.statusCode).toBe(204)
+    expect(registerPushToken).toHaveBeenCalledWith(authenticatedDriverId, 'ExponentPushToken[test-token]')
+
+    const invalid = await app.inject({ method: 'POST', url: '/api/v1/drivers/push-token', payload: { token: '' } })
+    expect(invalid.statusCode).toBe(400)
+  })
+
+  it('accepts an empty JSON body for a driver heartbeat', async () => {
+    const heartbeat = vi.fn().mockResolvedValue(undefined)
+    await app.register(registerDriverHttpRoutes, {
+      drivers: {
+        findDriverById: vi.fn(), findDriverIdsByZoneId: vi.fn(), findPushTokensByDriverIds: vi.fn(), registerPushToken: vi.fn(),
+        recordLocation: vi.fn(), setAvailability: vi.fn(), disconnect: vi.fn(), heartbeat, isAvailable: vi.fn(), getLiveDriverProfile: vi.fn()
+      }
+    })
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/drivers/heartbeat',
+      payload: {}
+    })
+
+    expect(response.statusCode).toBe(204)
+    expect(heartbeat).toHaveBeenCalledWith(authenticatedDriverId)
+  })
+
+  it('disconnects the authenticated driver', async () => {
+    const disconnect = vi.fn().mockResolvedValue(undefined)
+    await app.register(registerDriverHttpRoutes, {
+      drivers: {
+        findDriverById: vi.fn(), findDriverIdsByZoneId: vi.fn(), findPushTokensByDriverIds: vi.fn(), registerPushToken: vi.fn(),
+        recordLocation: vi.fn(), setAvailability: vi.fn(), disconnect, heartbeat: vi.fn(), isAvailable: vi.fn(), getLiveDriverProfile: vi.fn()
+      }
+    })
+
+    const response = await app.inject({ method: 'POST', url: '/api/v1/drivers/me/disconnect', payload: {} })
+
+    expect(response.statusCode).toBe(204)
+    expect(disconnect).toHaveBeenCalledWith(authenticatedDriverId)
+  })
+
+  it('forbids non-drivers from registering a push token', async () => {
+    authUser = { id: '22222222-2222-2222-2222-222222222222', role: 'merchant' }
+    const registerPushToken = vi.fn()
+    await app.register(registerDriverHttpRoutes, {
+      drivers: {
+        findDriverById: vi.fn(), findDriverIdsByZoneId: vi.fn(), findPushTokensByDriverIds: vi.fn(), registerPushToken,
+        recordLocation: vi.fn(), setAvailability: vi.fn(), disconnect: vi.fn(), heartbeat: vi.fn(), isAvailable: vi.fn(), getLiveDriverProfile: vi.fn()
+      }
+    })
+
+    const response = await app.inject({ method: 'POST', url: '/api/v1/drivers/push-token', payload: { token: 'ExponentPushToken[test-token]' } })
+
+    expect(response.statusCode).toBe(403)
+    expect(registerPushToken).not.toHaveBeenCalled()
+  })
+
   it('returns the authenticated driver profile', async () => {
     const driver = {
       id: authenticatedDriverId,
@@ -101,7 +166,7 @@ describe('driver HTTP authorization and identity scoping', () => {
     }
     const findDriverById = vi.fn().mockResolvedValue(driver)
     await app.register(registerDriverHttpRoutes, {
-      drivers: { findDriverById, recordLocation: vi.fn(), setAvailability: vi.fn(), heartbeat: vi.fn(), isAvailable: vi.fn(), getLiveDriverProfile: findDriverById }
+      drivers: { findDriverById, findDriverIdsByZoneId: vi.fn(), findPushTokensByDriverIds: vi.fn(), registerPushToken: vi.fn(), recordLocation: vi.fn(), setAvailability: vi.fn(), disconnect: vi.fn(), heartbeat: vi.fn(), isAvailable: vi.fn(), getLiveDriverProfile: findDriverById }
     })
 
     const response = await app.inject({ method: 'GET', url: '/api/v1/drivers/me' })
@@ -115,7 +180,7 @@ describe('driver HTTP authorization and identity scoping', () => {
     authUser = { id: '22222222-2222-2222-2222-222222222222', role: 'merchant' }
     const findDriverById = vi.fn()
     await app.register(registerDriverHttpRoutes, {
-      drivers: { findDriverById, recordLocation: vi.fn(), setAvailability: vi.fn(), heartbeat: vi.fn(), isAvailable: vi.fn(), getLiveDriverProfile: findDriverById }
+      drivers: { findDriverById, findDriverIdsByZoneId: vi.fn(), findPushTokensByDriverIds: vi.fn(), registerPushToken: vi.fn(), recordLocation: vi.fn(), setAvailability: vi.fn(), disconnect: vi.fn(), heartbeat: vi.fn(), isAvailable: vi.fn(), getLiveDriverProfile: findDriverById }
     })
 
     const response = await app.inject({ method: 'GET', url: '/api/v1/drivers/me' })
@@ -132,7 +197,7 @@ describe('driver HTTP authorization and identity scoping', () => {
   it('returns 404 when the authenticated driver has no profile', async () => {
     const findDriverById = vi.fn().mockResolvedValue(null)
     await app.register(registerDriverHttpRoutes, {
-      drivers: { findDriverById, recordLocation: vi.fn(), setAvailability: vi.fn(), heartbeat: vi.fn(), isAvailable: vi.fn(), getLiveDriverProfile: findDriverById }
+      drivers: { findDriverById, findDriverIdsByZoneId: vi.fn(), findPushTokensByDriverIds: vi.fn(), registerPushToken: vi.fn(), recordLocation: vi.fn(), setAvailability: vi.fn(), disconnect: vi.fn(), heartbeat: vi.fn(), isAvailable: vi.fn(), getLiveDriverProfile: findDriverById }
     })
 
     const response = await app.inject({ method: 'GET', url: '/api/v1/drivers/me' })
@@ -171,7 +236,7 @@ describe('driver HTTP authorization and identity scoping', () => {
         getDriverOrders,
         getDriverHistory: vi.fn(),
         getDriverEarnings: vi.fn(),
-        listAvailableOrders: vi.fn()
+        listAvailableOrders: vi.fn(), getOrderRoute: vi.fn(), findDriverOrderById: vi.fn()
       },
       findMerchantById: vi.fn(),
       findZoneById: vi.fn(),
@@ -205,7 +270,7 @@ describe('driver HTTP authorization and identity scoping', () => {
     await app.register(registerOrderHttpRoutes, {
       orders: {
         assignOrder: vi.fn(), collectOrder: vi.fn(), completeOrder: vi.fn(), returnOrder: vi.fn(), confirmReturn: vi.fn(),
-        createOrder: vi.fn(), estimateOrder: vi.fn(), getMerchantOrders: vi.fn(), getDriverOrders: vi.fn(), getDriverHistory, getDriverEarnings: vi.fn(), listAvailableOrders: vi.fn()
+        createOrder: vi.fn(), estimateOrder: vi.fn(), getMerchantOrders: vi.fn(), getDriverOrders: vi.fn(), getDriverHistory, getDriverEarnings: vi.fn(), listAvailableOrders: vi.fn(), getOrderRoute: vi.fn(), findDriverOrderById: vi.fn()
       },
       findMerchantById: vi.fn(), findZoneById: vi.fn(), findDriverById: vi.fn()
     })
@@ -228,7 +293,7 @@ describe('driver HTTP authorization and identity scoping', () => {
     await app.register(registerOrderHttpRoutes, {
       orders: {
         assignOrder: vi.fn(), collectOrder: vi.fn(), completeOrder: vi.fn(), returnOrder: vi.fn(), confirmReturn: vi.fn(),
-        createOrder: vi.fn(), estimateOrder: vi.fn(), getMerchantOrders: vi.fn(), getDriverOrders: vi.fn(), getDriverHistory, getDriverEarnings: vi.fn(), listAvailableOrders: vi.fn()
+        createOrder: vi.fn(), estimateOrder: vi.fn(), getMerchantOrders: vi.fn(), getDriverOrders: vi.fn(), getDriverHistory, getDriverEarnings: vi.fn(), listAvailableOrders: vi.fn(), getOrderRoute: vi.fn(), findDriverOrderById: vi.fn()
       },
       findMerchantById: vi.fn(), findZoneById: vi.fn(), findDriverById: vi.fn()
     })
@@ -252,7 +317,7 @@ describe('driver HTTP authorization and identity scoping', () => {
     await app.register(registerOrderHttpRoutes, {
       orders: {
         assignOrder: vi.fn(), collectOrder: vi.fn(), completeOrder: vi.fn(), returnOrder: vi.fn(), confirmReturn: vi.fn(),
-        createOrder: vi.fn(), estimateOrder: vi.fn(), getMerchantOrders: vi.fn(), getDriverOrders: vi.fn(), getDriverHistory: vi.fn(), getDriverEarnings, listAvailableOrders: vi.fn()
+        createOrder: vi.fn(), estimateOrder: vi.fn(), getMerchantOrders: vi.fn(), getDriverOrders: vi.fn(), getDriverHistory: vi.fn(), getDriverEarnings, listAvailableOrders: vi.fn(), getOrderRoute: vi.fn(), findDriverOrderById: vi.fn()
       },
       findMerchantById: vi.fn(), findZoneById: vi.fn(), findDriverById: vi.fn()
     })
@@ -274,7 +339,7 @@ describe('driver HTTP authorization and identity scoping', () => {
     await app.register(registerOrderHttpRoutes, {
       orders: {
         assignOrder: vi.fn(), collectOrder: vi.fn(), completeOrder: vi.fn(), returnOrder: vi.fn(), confirmReturn: vi.fn(),
-        createOrder: vi.fn(), estimateOrder: vi.fn(), getMerchantOrders: vi.fn(), getDriverOrders: vi.fn(), getDriverHistory: vi.fn(), getDriverEarnings, listAvailableOrders: vi.fn()
+        createOrder: vi.fn(), estimateOrder: vi.fn(), getMerchantOrders: vi.fn(), getDriverOrders: vi.fn(), getDriverHistory: vi.fn(), getDriverEarnings, listAvailableOrders: vi.fn(), getOrderRoute: vi.fn(), findDriverOrderById: vi.fn()
       },
       findMerchantById: vi.fn(), findZoneById: vi.fn(), findDriverById: vi.fn()
     })
@@ -292,7 +357,7 @@ describe('driver HTTP authorization and identity scoping', () => {
     await app.register(registerOrderHttpRoutes, {
       orders: {
         assignOrder: vi.fn(), collectOrder: vi.fn(), completeOrder: vi.fn(), returnOrder: vi.fn(), confirmReturn: vi.fn(),
-        createOrder: vi.fn(), estimateOrder: vi.fn(), getMerchantOrders: vi.fn(), getDriverOrders: vi.fn(), getDriverHistory: vi.fn(), getDriverEarnings: vi.fn(), listAvailableOrders
+        createOrder: vi.fn(), estimateOrder: vi.fn(), getMerchantOrders: vi.fn(), getDriverOrders: vi.fn(), getDriverHistory: vi.fn(), getDriverEarnings: vi.fn(), listAvailableOrders, getOrderRoute: vi.fn(), findDriverOrderById: vi.fn()
       },
       findMerchantById: vi.fn(), findZoneById: vi.fn(), findDriverById
     })
@@ -315,7 +380,7 @@ describe('driver HTTP authorization and identity scoping', () => {
     await app.register(registerOrderHttpRoutes, {
       orders: {
         assignOrder: vi.fn(), collectOrder: vi.fn(), completeOrder: vi.fn(), returnOrder: vi.fn(), confirmReturn: vi.fn(),
-        createOrder: vi.fn(), estimateOrder: vi.fn(), getMerchantOrders: vi.fn(), getDriverOrders: vi.fn(), getDriverHistory: vi.fn(), getDriverEarnings: vi.fn(), listAvailableOrders
+        createOrder: vi.fn(), estimateOrder: vi.fn(), getMerchantOrders: vi.fn(), getDriverOrders: vi.fn(), getDriverHistory: vi.fn(), getDriverEarnings: vi.fn(), listAvailableOrders, getOrderRoute: vi.fn(), findDriverOrderById: vi.fn()
       },
       findMerchantById: vi.fn(), findZoneById: vi.fn(), findDriverById
     })
@@ -333,7 +398,7 @@ describe('driver HTTP authorization and identity scoping', () => {
     await app.register(registerOrderHttpRoutes, {
       orders: {
         assignOrder: vi.fn(), collectOrder: vi.fn(), completeOrder: vi.fn(), returnOrder: vi.fn(), confirmReturn: vi.fn(),
-        createOrder: vi.fn(), estimateOrder: vi.fn(), getMerchantOrders: vi.fn(), getDriverOrders: vi.fn(), getDriverHistory: vi.fn(), getDriverEarnings: vi.fn(), listAvailableOrders
+        createOrder: vi.fn(), estimateOrder: vi.fn(), getMerchantOrders: vi.fn(), getDriverOrders: vi.fn(), getDriverHistory: vi.fn(), getDriverEarnings: vi.fn(), listAvailableOrders, getOrderRoute: vi.fn(), findDriverOrderById: vi.fn()
       },
       findMerchantById: vi.fn(),
       findZoneById: vi.fn(),

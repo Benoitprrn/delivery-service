@@ -1,4 +1,4 @@
-import { Clock } from 'lucide-react'
+import { Clock, TriangleAlert } from 'lucide-react'
 import {
   formatPickupScheduledAt,
   formatPriceEuros,
@@ -46,6 +46,12 @@ export function OrderCard({ order, onClick }: OrderCardProps) {
           {hasChargeablePrice(order.status) ? `${formatPriceEuros(order.priceCents)} €` : '—'}
         </span>
       </div>
+      {order.status === 'AVAILABLE' && order.dispatchFailed && (
+        <div className="mt-2 flex items-center gap-2 rounded-lg bg-red-50 px-3 py-2">
+          <TriangleAlert className="h-4 w-4 shrink-0 text-red-600" />
+          <span className="text-body-sm font-semibold text-red-700">Aucun livreur disponible — contactez le support</span>
+        </div>
+      )}
       {/* TODO: TWILIO — pont temporaire tant que le SMS n'est pas branché :
           le commerçant lit le code au client par téléphone. À retirer dès
           que Twilio est intégré (Phase 2+). */}

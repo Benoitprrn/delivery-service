@@ -2,11 +2,14 @@ import { randomUUID } from 'node:crypto'
 import { createServer, type Server as HttpServer } from 'node:http'
 import { afterEach, describe, expect, it } from 'vitest'
 import { io as createClient, type Socket } from 'socket.io-client'
-import { Server } from 'socket.io'
-import type { EligibilityEngine } from '../../src/modules/marketplace/public.js'
 import { processOutboxBatch } from '../../src/platform/outbox-relay.js'
 import { pool } from '../../src/platform/db.js'
-import { createSocketEventEmitter, createSocketServer, type RealtimeSocketServer } from '../../src/realtime/socket-handler.js'
+import {
+  createSocketEventEmitter,
+  createSocketServer,
+  type DispatchStarter,
+  type RealtimeSocketServer
+} from '../../src/realtime/socket-handler.js'
 
 const zoneId = '11111111-1111-1111-1111-111111111111'
 
@@ -26,16 +29,24 @@ type OutboxRow = {
 let realtime: RealtimeServer | undefined
 const clients: Socket[] = []
 
-function eligibilityEngine(driverIds: string[]): EligibilityEngine {
-  return { getEligibleDrivers: async () => driverIds }
+function dispatchStarter(onStart: (orderId: string) => void = () => undefined): DispatchStarter {
+  return {
+    startDispatch: async (orderId) => {
+      onStart(orderId)
+    }
+  }
 }
 
 async function startRealtimeServer(): Promise<RealtimeServer> {
   const httpServer = createServer()
   const io = createSocketServer(httpServer, {
-    verifyToken: async (token) => ({ id: token, role: 'driver' }),
+    verifyToken: async (token) =>
+      token.startsWith('merchant-')
+        ? { id: token.slice('merchant-'.length), role: 'merchant' }
+        : { id: token, role: 'driver' },
     findDriverById: async (id) => ({ id, name: 'Test driver', phone: null, zoneId, isAvailable: false }),
-    isAvailable: async () => true
+    isAvailable: async () => true,
+    setUnavailable: async () => undefined
   })
 
   await new Promise<void>((resolve, reject) => {
@@ -159,35 +170,16 @@ afterEach(async () => {
 })
 
 describe('outbox relay', () => {
-  it('emits an unpublished event to its zone and marks it published', async () => {
-    realtime = await startRealtimeServer()
-    const client = await connectClient(realtime.url)
-    const payload = { orderId: randomUUID(), zoneId, merchantId: randomUUID() }
-    const eventId = await insertOutboxEvent(payload)
-    const received = waitForSocketEvent(client, 'new_order', payload.orderId)
-
-    await processOutboxBatch(pool, createSocketEventEmitter(realtime.io, eligibilityEngine(['33333333-3333-3333-3333-333333333333'])))
-
-    await expect(received).resolves.toEqual(payload)
-    expect((await outboxRow(eventId)).published_at).not.toBeNull()
-  })
-
   it('does not emit an event that was already published', async () => {
     realtime = await startRealtimeServer()
-    const client = await connectClient(realtime.url)
     const payload = { orderId: randomUUID(), zoneId, merchantId: randomUUID() }
     const eventId = await insertOutboxEvent(payload, 'order.created.v1', true)
-    let emitted = false
-    const onEvent = (received: Record<string, unknown>) => {
-      emitted ||= received.orderId === payload.orderId
-    }
-    client.on('new_order', onEvent)
+    const started: string[] = []
 
-    await processOutboxBatch(pool, createSocketEventEmitter(realtime.io, eligibilityEngine(['33333333-3333-3333-3333-333333333333'])))
+    await processOutboxBatch(pool, createSocketEventEmitter(realtime.io, dispatchStarter((orderId) => started.push(orderId))))
     await new Promise<void>((resolve) => setTimeout(resolve, 100))
 
-    client.off('new_order', onEvent)
-    expect(emitted).toBe(false)
+    expect(started).toEqual([])
     expect((await outboxRow(eventId)).published_at).not.toBeNull()
   })
 
@@ -243,38 +235,58 @@ describe('outbox relay', () => {
     expect(rows.every((row) => row.published_at !== null)).toBe(true)
   })
 
-  it('emits new_order only to drivers returned by the eligibility engine', async () => {
+  it('starts dispatch for a newly created order instead of broadcasting to the marketplace', async () => {
     realtime = await startRealtimeServer()
-    const eligibleDriverId = '33333333-3333-3333-3333-333333333333'
-    const ineligibleDriverId = '44444444-4444-4444-4444-444444444444'
-    const eligibleClient = await connectClient(realtime.url, eligibleDriverId)
-    const ineligibleClient = await connectClient(realtime.url, ineligibleDriverId)
     const payload = { orderId: randomUUID(), zoneId, merchantId: randomUUID() }
     const eventId = await insertOutboxEvent(payload)
-    const received = waitForSocketEvent(eligibleClient, 'new_order', payload.orderId)
-    const notReceived = expectNoSocketEvent(ineligibleClient, 'new_order', payload.orderId)
+    const started: string[] = []
 
-    await processOutboxBatch(pool, createSocketEventEmitter(realtime.io, eligibilityEngine([eligibleDriverId])))
+    await processOutboxBatch(pool, createSocketEventEmitter(realtime.io, dispatchStarter((orderId) => started.push(orderId))))
+
+    expect(started).toEqual([payload.orderId])
+    expect((await outboxRow(eventId)).published_at).not.toBeNull()
+  })
+
+  it('notifies only the offered driver of a dispatch offer', async () => {
+    realtime = await startRealtimeServer()
+    const offeredDriverId = '33333333-3333-3333-3333-333333333333'
+    const otherDriverId = '44444444-4444-4444-4444-444444444444'
+    const offeredClient = await connectClient(realtime.url, offeredDriverId)
+    const otherClient = await connectClient(realtime.url, otherDriverId)
+    const payload = {
+      offerId: randomUUID(),
+      orderId: randomUUID(),
+      driverId: offeredDriverId,
+      round: 1,
+      radiusKm: 1,
+      expiresAt: new Date().toISOString()
+    }
+    const eventId = await insertOutboxEvent(payload, 'dispatch.offer_created.v1')
+    const received = waitForSocketEvent(offeredClient, 'dispatch_offer_created', payload.orderId)
+    const notReceived = expectNoSocketEvent(otherClient, 'dispatch_offer_created', payload.orderId)
+
+    await processOutboxBatch(pool, createSocketEventEmitter(realtime.io, dispatchStarter()))
 
     await expect(received).resolves.toEqual(payload)
     await expect(notReceived).resolves.toBeUndefined()
     expect((await outboxRow(eventId)).published_at).not.toBeNull()
   })
 
-  it('does not emit new_order when the eligibility engine returns no drivers', async () => {
+  it('notifies the merchant room when dispatch fails after the last round', async () => {
     realtime = await startRealtimeServer()
-    const client = await connectClient(realtime.url)
-    const payload = { orderId: randomUUID(), zoneId, merchantId: randomUUID() }
-    const eventId = await insertOutboxEvent(payload)
+    const merchantId = randomUUID()
+    const merchantClient = await connectClient(realtime.url, `merchant-${merchantId}`)
+    const payload = { orderId: randomUUID(), merchantId }
+    const eventId = await insertOutboxEvent(payload, 'order.dispatch_failed.v1')
+    const received = waitForSocketEvent(merchantClient, 'dispatch_failed', payload.orderId)
 
-    const notReceived = expectNoSocketEvent(client, 'new_order', payload.orderId)
-    await processOutboxBatch(pool, createSocketEventEmitter(realtime.io, eligibilityEngine([])))
+    await processOutboxBatch(pool, createSocketEventEmitter(realtime.io, dispatchStarter()))
 
-    await expect(notReceived).resolves.toBeUndefined()
+    await expect(received).resolves.toEqual(payload)
     expect((await outboxRow(eventId)).published_at).not.toBeNull()
   })
 
-  it('emits order_taken to every socket in the zone without eligibility filtering', async () => {
+  it('emits order_taken to every socket in the zone', async () => {
     realtime = await startRealtimeServer()
     const firstClient = await connectClient(realtime.url, '33333333-3333-3333-3333-333333333333')
     const secondClient = await connectClient(realtime.url, '44444444-4444-4444-4444-444444444444')
@@ -283,7 +295,7 @@ describe('outbox relay', () => {
     const firstReceived = waitForSocketEvent(firstClient, 'order_taken', payload.orderId)
     const secondReceived = waitForSocketEvent(secondClient, 'order_taken', payload.orderId)
 
-    await processOutboxBatch(pool, createSocketEventEmitter(realtime.io, eligibilityEngine([])))
+    await processOutboxBatch(pool, createSocketEventEmitter(realtime.io, dispatchStarter()))
 
     await expect(firstReceived).resolves.toEqual(payload)
     await expect(secondReceived).resolves.toEqual(payload)

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createDriversModule } from '../../src/modules/drivers/public.js'
+import { RecordDriverLocationUseCase } from '../../src/modules/drivers/application/record-driver-location.js'
+import { PostgresDriverLocationRepository } from '../../src/modules/drivers/infrastructure/postgres-driver-location-repository.js'
 import { startOutboxRelay } from '../../src/platform/outbox-relay.js'
 import { pool } from '../../src/platform/db.js'
 
@@ -17,7 +18,12 @@ afterEach(async () => {
 describe('driver location retention', () => {
   it('stores an expiration exactly seven days after the recorded time', async () => {
     const recordedAt = new Date('2026-09-12T10:30:00.000Z')
-    const { recordLocation } = createDriversModule(pool)
+    const useCase = new RecordDriverLocationUseCase(
+      new PostgresDriverLocationRepository(pool),
+      { record: async () => undefined, clear: async () => undefined, findAllWithinRadius: async () => [] },
+      { findActiveTrackingTokensByDriverId: async () => ['tracking-token'] }
+    )
+    const recordLocation = useCase.execute.bind(useCase)
 
     await recordLocation({ driverId, lat: 46.2058, lng: 5.2255, recordedAt })
 

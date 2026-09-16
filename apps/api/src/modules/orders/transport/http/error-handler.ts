@@ -6,6 +6,7 @@ import {
   MerchantNotFoundError,
   OrderConflictError,
   OrderNotFoundError,
+  OrderRouteAccessDeniedError,
   PastPickupScheduleError
 } from '../../domain/errors.js'
 import {
@@ -63,6 +64,9 @@ export function mapErrorToHttp(error: unknown, correlationId: string): HttpError
   }
   if (error instanceof OrderConflictError) {
     return mappedError(409, error, correlationId)
+  }
+  if (error instanceof OrderRouteAccessDeniedError) {
+    return mappedError(403, error, correlationId)
   }
   if (error instanceof OrderNotFoundError || error instanceof MerchantNotFoundError) {
     return mappedError(404, error, correlationId)

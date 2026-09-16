@@ -59,10 +59,19 @@ export type Order = {
   driverName: string | null
   driverPhone: string | null
   proofAsset: MerchantProofAsset | null
+  // Identifiant opaque de la page de suivi public (/track/[trackingToken]) —
+  // voir apps/api/src/modules/orders/domain/order.ts MerchantOrder. Absent
+  // des vues livreur, réservé au commerçant pour partager le lien.
+  trackingToken: string
   // TODO: TWILIO — code de livraison temporairement exposé par l'API tant
   // que l'envoi SMS n'est pas branché (Phase 2+). Présent uniquement quand
   // status === 'COLLECTED'. À retirer une fois Twilio intégré.
   deliveryCode?: string
+  // true si le dispatch séquentiel VROOM a épuisé les 4 tours (groupage +
+  // 1/2/3km) sans trouver de livreur — voir apps/api/src/modules/orders/
+  // domain/order.ts MerchantOrder. Reste true même après une reprise
+  // manuelle par l'opérateur ; n'a de sens tant que status === 'AVAILABLE'.
+  dispatchFailed: boolean
 }
 
 export type StatusConfig = {

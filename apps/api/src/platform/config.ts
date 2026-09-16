@@ -13,9 +13,13 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3000),
   DATABASE_URL: z.string().min(1),
   OSRM_URL: z.string().min(1),
+  VROOM_URL: z.string().min(1),
   OPENCAGE_API_KEY: z.string().min(1),
   SUPABASE_URL: z.string().min(1),
-  VALKEY_URL: z.string().min(1)
+  SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
+  VALKEY_URL: z.string().min(1),
+  DISPATCH_OFFER_TTL_SECONDS: z.coerce.number().int().positive().default(60),
+  PGBOSS_DATABASE_URL: z.string().min(1)
 })
 
 export type Config = z.infer<typeof envSchema>

@@ -1,6 +1,7 @@
-import type { Session } from '@supabase/supabase-js'
+import type { Session, User } from '@supabase/supabase-js'
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { disconnectSocket } from './socket'
+import { api } from './api'
 import { supabase } from './supabase'
 
 export type AuthRole = 'merchant' | 'driver' | 'admin'
@@ -9,6 +10,7 @@ type AuthStatus = 'loading' | 'signedOut' | 'signedIn'
 type AuthContextValue = {
   status: AuthStatus
   role: AuthRole | null
+  user: User | null
   signOut: () => Promise<void>
 }
 
@@ -22,6 +24,7 @@ function extractRole(session: Session | null): AuthRole | null {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>('loading')
   const [role, setRole] = useState<AuthRole | null>(null)
+  const [user, setUser] = useState<User | null>(null)
 
   useEffect(() => {
     let isMounted = true
@@ -34,6 +37,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         disconnectSocket()
       }
       setRole(extractRole(session))
+      setUser(session?.user ?? null)
       setStatus(session === null ? 'signedOut' : 'signedIn')
     }
 
@@ -53,11 +57,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     () => ({
       status,
       role,
+      user,
       signOut: async () => {
+        if (role === 'driver') {
+          try {
+            await api.disconnectDriver()
+          } catch (error) {
+            console.warn('[auth] Driver disconnect failed before sign-out', error)
+          }
+        }
         await supabase.auth.signOut()
       }
     }),
-    [status, role]
+    [status, role, user]
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

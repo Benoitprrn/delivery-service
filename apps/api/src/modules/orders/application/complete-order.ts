@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { Actor, Order } from '../domain/order.js'
 import { decodeProofOfDelivery, type ProofOfDeliveryAsset } from '../domain/proof-of-delivery.js'
 import type { OrderRepository } from '../ports/order-repository.js'
+import type { DriverCapacityWriter } from '../ports/driver-capacity-writer.js'
 
 export type CompleteOrderCommand = {
   orderId: string
@@ -16,11 +17,14 @@ export type CompleteOrderCommand = {
 }
 
 export class CompleteOrderUseCase {
-  public constructor(private readonly orderRepository: OrderRepository) {}
+  public constructor(
+    private readonly orderRepository: OrderRepository,
+    private readonly capacityWriter: DriverCapacityWriter
+  ) {}
 
-  public execute(command: CompleteOrderCommand): Promise<Order> {
+  public async execute(command: CompleteOrderCommand): Promise<Order> {
     const proof = this.toRepositoryProof(command.proof)
-    return this.orderRepository.complete(
+    const order = await this.orderRepository.complete(
       command.orderId,
       command.driverId,
       command.expectedVersion,
@@ -28,6 +32,8 @@ export class CompleteOrderUseCase {
       command.actor,
       command.correlationId ?? randomUUID()
     )
+    await this.capacityWriter.decrement(command.driverId)
+    return order
   }
 
   private toRepositoryProof(proof: CompleteOrderCommand['proof']): { method: 'code'; code: string } | ProofOfDeliveryAsset {

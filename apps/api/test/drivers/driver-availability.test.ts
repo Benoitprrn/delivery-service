@@ -32,7 +32,12 @@ describe('driver availability use cases', () => {
 
   it('overrides the legacy Postgres availability with the live value', async () => {
     const repository = new MemoryAvailabilityRepository()
-    const useCase = new GetDriverLiveProfileUseCase({ findById: async () => ({ id: 'driver-1', name: 'A', phone: null, zoneId: 'zone-1', isAvailable: true }) }, repository)
+    const useCase = new GetDriverLiveProfileUseCase({
+      findById: async () => ({ id: 'driver-1', name: 'A', phone: null, zoneId: 'zone-1', isAvailable: true }),
+      findIdsByZoneId: async () => [],
+      setPushToken: async () => undefined,
+      findPushTokensByDriverIds: async () => []
+    }, repository)
     await expect(useCase.execute('driver-1')).resolves.toMatchObject({ isAvailable: false })
   })
 })

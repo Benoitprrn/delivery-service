@@ -19,35 +19,49 @@ type OutboxEventRow = {
 /**
  * Publie un lot d'événements sans tenir compte du résultat des autres lignes.
  *
- * Le verrou est conservé avec les mises à jour dans une même transaction : en
- * cas d'arrêt du processus avant le COMMIT, PostgreSQL libère le verrou et la
- * ligne reste non publiée pour le cycle suivant. Avec FOR UPDATE SKIP LOCKED,
- * plusieurs relais concurrents ne prennent jamais la même ligne en parallèle.
+ * Le lot est réclamé dans une transaction courte : avec FOR UPDATE SKIP
+ * LOCKED, plusieurs relais concurrents ne prennent jamais le même lot en
+ * parallèle. Le bail locked_until protège chaque publication après le COMMIT,
+ * sans conserver de transaction PostgreSQL durant l'appel réseau. En cas
+ * d'arrêt, le bail expire et la ligne non publiée est reprise au cycle suivant.
  */
 export async function processOutboxBatch(pool: Pool, emit: OutboxEmit): Promise<void> {
-  await inTransaction(pool, async (client) => {
+  const outboxEvents = await inTransaction(pool, async (client) => {
     const result = await client.query<OutboxEventRow>(
-      `select id, event_type, aggregate_id, payload, correlation_id
-       from outbox_event
-       where published_at is null
-       order by created_at asc, id asc
-       limit 10
-       for update skip locked`
+      `update outbox_event
+       set locked_until = now() + interval '30 seconds'
+       where id in (
+         select id from outbox_event
+         where published_at is null
+           and (locked_until is null or locked_until < now())
+         order by created_at asc, id asc
+         limit 10
+         for update skip locked
+       )
+       returning id, event_type, aggregate_id, payload, correlation_id`
     )
+    return result.rows
+  })
 
-    for (const outboxEvent of result.rows) {
-      try {
-        await emit({ eventType: outboxEvent.event_type, payload: outboxEvent.payload })
-        await client.query('update outbox_event set published_at = now() where id = $1', [outboxEvent.id])
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
+  for (const outboxEvent of outboxEvents) {
+    try {
+      await emit({ eventType: outboxEvent.event_type, payload: outboxEvent.payload })
+      await inTransaction(pool, async (client) => {
         await client.query(
-          'update outbox_event set attempts = attempts + 1, last_error = $2 where id = $1',
+          'update outbox_event set published_at = now(), locked_until = null where id = $1 and published_at is null',
+          [outboxEvent.id]
+        )
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      await inTransaction(pool, async (client) => {
+        await client.query(
+          'update outbox_event set attempts = attempts + 1, last_error = $2, locked_until = null where id = $1 and published_at is null',
           [outboxEvent.id, message]
         )
-      }
+      })
     }
-  })
+  }
 }
 
 export function startOutboxRelay(pool: Pool, emit: OutboxEmit, intervalMs = 2_000): () => void {

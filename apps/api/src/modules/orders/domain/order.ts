@@ -47,10 +47,12 @@ export type Order = {
 
 /** Response shape scoped to a merchant. */
 export type MerchantOrder = Order & {
+  trackingToken: string
   events: import('./order-event.js').OrderEvent[]
   driverName: string | null
   driverPhone: string | null
   proofAsset: MerchantProofAsset | null
+  dispatchFailed: boolean
   /**
    * TODO: TWILIO — temporary display-only code. It is deliberately absent from
    * every other order DTO and is removed as soon as SMS delivery is available.

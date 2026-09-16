@@ -1,4 +1,12 @@
 #!/usr/bin/env bash
+# =============================================================================
+# OBSOLETE SINCE PHASE 4E
+#
+# POST /api/v1/orders/:id/assign was removed and replaced by the sequential
+# VROOM dispatch flow. This script will fail with a 404 at the assign step if
+# run as-is, and must not be used to validate the current order flow.
+# =============================================================================
+
 set -euo pipefail
 
 api_url='http://localhost:3000'

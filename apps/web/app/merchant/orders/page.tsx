@@ -66,7 +66,6 @@ export default function OrdersPage() {
   const hasInitializedDefaultTab = useRef(false)
 
   const [orders, setOrders] = useState<Order[]>([])
-  const [zoneId, setZoneId] = useState<string | undefined>(undefined)
   const [merchantId, setMerchantId] = useState<string | undefined>(undefined)
   const [isLoading, setIsLoading] = useState(true)
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null)
@@ -94,7 +93,6 @@ export default function OrdersPage() {
 
     setOrders(parsed.orders)
     setSelectedOrder((current) => current === null ? null : parsed.orders.find((order) => order.id === current.id) ?? null)
-    setZoneId(parsed.zoneId)
     setMerchantId(session?.user.id)
     if (!hasInitializedDefaultTab.current) {
       const hasInProgressOrder = parsed.orders.some((order) => TAB_CONFIG['in-progress'].statuses.includes(order.status))
@@ -130,25 +128,54 @@ export default function OrdersPage() {
   }, [])
 
   useEffect(() => {
-    if (zoneId === undefined || merchantId === undefined) return
+    if (merchantId === undefined) return
+    let cancelled = false
+    let socket: Socket | null = null
 
-    const socket: Socket = io(apiUrl, { transports: ['websocket'], query: { zoneId } })
     function handleRealtimeEvent(payload: unknown) {
       if (isRecord(payload) && payload.merchantId === merchantId) {
         void loadOrders()
       }
     }
 
-    socket.on('new_order', handleRealtimeEvent)
-    socket.on('order_taken', handleRealtimeEvent)
-    socket.on('order_updated', handleRealtimeEvent)
+    function handleDispatchFailed(payload: unknown) {
+      if (!isRecord(payload) || payload.merchantId !== merchantId) return
+      void loadOrders()
+      showToast({
+        variant: 'error',
+        title: 'Aucun livreur disponible',
+        message: "Une de vos livraisons n'a trouvé aucun livreur — contactez le support."
+      })
+    }
+
+    async function connect() {
+      // Le namespace commerçant exige un JWT (voir
+      // apps/api/src/realtime/socket-handler.ts io.use) — sans lui la
+      // connexion est immédiatement rejetée (Unauthorized).
+      const supabase = createSupabaseBrowserClient()
+      const { data } = await supabase.auth.getSession()
+      const token = data.session?.access_token
+      if (token === undefined || cancelled) return
+      socket = io(apiUrl, { transports: ['websocket'], auth: { token } })
+      socket.on('new_order', handleRealtimeEvent)
+      socket.on('order_taken', handleRealtimeEvent)
+      socket.on('order_updated', handleRealtimeEvent)
+      socket.on('dispatch_failed', handleDispatchFailed)
+    }
+
+    void connect()
+
     return () => {
+      cancelled = true
+      if (socket === null) return
       socket.off('new_order', handleRealtimeEvent)
       socket.off('order_taken', handleRealtimeEvent)
       socket.off('order_updated', handleRealtimeEvent)
+      socket.off('dispatch_failed', handleDispatchFailed)
       socket.disconnect()
     }
-  }, [zoneId, merchantId, loadOrders])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [merchantId, loadOrders])
 
   const ordersByTab = useMemo(() => {
     const grouped: Record<OrderTab, Order[]> = {

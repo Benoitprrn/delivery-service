@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Actor, Order } from '../domain/order.js'
 import type { OrderRepository } from '../ports/order-repository.js'
+import type { DriverCapacityWriter } from '../ports/driver-capacity-writer.js'
 
 export type ReturnOrderCommand = {
   orderId: string
@@ -33,15 +34,20 @@ export type ConfirmReturnCommand = {
 }
 
 export class ConfirmReturnUseCase {
-  public constructor(private readonly orderRepository: OrderRepository) {}
+  public constructor(
+    private readonly orderRepository: OrderRepository,
+    private readonly capacityWriter: DriverCapacityWriter
+  ) {}
 
-  public execute(command: ConfirmReturnCommand): Promise<Order> {
-    return this.orderRepository.confirmReturn(
+  public async execute(command: ConfirmReturnCommand): Promise<Order> {
+    const order = await this.orderRepository.confirmReturn(
       command.orderId,
       command.driverId,
       command.expectedVersion,
       command.actor,
       command.correlationId ?? randomUUID()
     )
+    await this.capacityWriter.decrement(command.driverId)
+    return order
   }
 }

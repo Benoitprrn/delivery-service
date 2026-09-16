@@ -27,7 +27,10 @@ export default function DeliveryProofModal() {
   async function submitProof(proof: DeliveryProof) {
     await api.completeOrder(id, expectedVersion, proof);
     showToast(SUCCESS_MESSAGE[proof.method]);
-    router.back();
+    // La preuve est ouverte depuis le détail, lui-même modal depuis la
+    // timeline. Fermer toute la pile modale force le retour sur l'onglet,
+    // dont useFocusEffect recharge la commande avec son statut final.
+    router.dismissAll();
   }
 
   function handleAbsent() {
@@ -45,7 +48,7 @@ export default function DeliveryProofModal() {
     try {
       await api.returnOrder(id, expectedVersion);
       showToast('Client absent — commande en retour');
-      router.back();
+      router.dismissAll();
     } catch (err) {
       showToast(err instanceof ApiError ? err.message : 'Une erreur est survenue.');
     }

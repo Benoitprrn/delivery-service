@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 osrm_route_url='http://localhost:5000/route/v1/bicycle/5.2255,46.2058;5.23,46.21'
+vroom_health_url='http://localhost:3010/health'
 api_pid=''
 web_pid=''
 
@@ -36,7 +37,20 @@ if ! command -v setsid >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "[1/4] Démarrage de Supabase…"
+docker start valkey 2>/dev/null || true
+# VROOM — même pattern que Valkey ci-dessus, mais capable de créer le
+# conteneur s'il n'existe pas encore (Valkey est supposé déjà créé lors de la
+# mise en place initiale du projet, VROOM est plus récent et pas forcément
+# présent sur tous les postes).
+docker start vroom 2>/dev/null || docker run -d \
+  --name vroom \
+  --add-host=host.docker.internal:host-gateway \
+  -p 3010:3000 \
+  -v "$repo_root/infra/vroom/config.yml:/conf/config.yml" \
+  -e VROOM_ROUTER=osrm \
+  ghcr.io/vroom-project/vroom-docker:latest >/dev/null
+
+echo "[1/5] Démarrage de Supabase…"
 if ! command -v timeout >/dev/null 2>&1; then
   echo "Erreur : la commande timeout est requise pour borner le démarrage de Supabase." >&2
   exit 1
@@ -54,7 +68,7 @@ if ! timeout 120s "${supabase_command[@]}" start; then
   exit 1
 fi
 
-echo "[2/4] Vérification d’OSRM…"
+echo "[2/5] Vérification d’OSRM…"
 if ! command -v curl >/dev/null 2>&1; then
   echo "Erreur : curl est requis pour vérifier OSRM." >&2
   exit 1
@@ -66,7 +80,23 @@ if ! curl --fail --silent --show-error --max-time 3 "$osrm_route_url" -o /dev/nu
   exit 1
 fi
 
-echo "[3/4] Démarrage de l’API Fastify…"
+echo "[3/5] Vérification de VROOM…"
+vroom_ready=false
+for attempt in {1..10}; do
+  if curl --fail --silent --show-error --max-time 2 "$vroom_health_url" -o /dev/null; then
+    vroom_ready=true
+    break
+  fi
+  sleep 1
+done
+if [[ "$vroom_ready" != true ]]; then
+  echo "Erreur : VROOM ne répond pas sur http://localhost:3010 après 10s." >&2
+  echo "Vérifiez ses logs :" >&2
+  echo "  docker logs vroom" >&2
+  exit 1
+fi
+
+echo "[4/5] Démarrage de l’API Fastify…"
 pushd "$repo_root/apps/api" >/dev/null
 setsid npm run dev &
 api_pid=$!
@@ -97,7 +127,7 @@ if [[ "$api_ready" != true ]]; then
   exit 1
 fi
 
-echo "[4/4] Démarrage de Next.js (web)…"
+echo "[5/5] Démarrage de Next.js (web)…"
 setsid npm run dev -w apps/web &
 web_pid=$!
 

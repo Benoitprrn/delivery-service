@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import type { DispatchOffer } from './dispatch-types';
 import type { AvailableOrder, DriverHistoryOrder, DriverOrder, DriverProfile, Order } from './orders-types';
 import type { DriverEarnings } from './wallet-types';
 
@@ -9,7 +10,7 @@ function requireEnv(name: string, value: string | undefined): string {
   return value;
 }
 
-const API_URL = requireEnv('EXPO_PUBLIC_API_URL', process.env.EXPO_PUBLIC_API_URL);
+export const API_URL = requireEnv('EXPO_PUBLIC_API_URL', process.env.EXPO_PUBLIC_API_URL);
 
 export class ApiError extends Error {
   constructor(
@@ -27,6 +28,14 @@ export type DeliveryProof =
   | { method: 'code'; code: string }
   | { method: 'signature'; imageBase64: string }
   | { method: 'photo'; imageBase64: string };
+
+// Miroir de GeoJsonLineString côté apps/api — voir
+// apps/api/src/modules/orders/ports/routing-provider.ts. Coordonnées [lng, lat],
+// directement consommables par un ShapeSource MapLibre.
+export type OrderRouteGeometry = {
+  type: 'LineString';
+  coordinates: [number, number][];
+};
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const { data } = await supabase.auth.getSession();
@@ -111,11 +120,47 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ lat, lng, recordedAt })
     }),
+  disconnectDriver: () => request<void>('/api/v1/drivers/me/disconnect', {
+    method: 'POST',
+    body: JSON.stringify({})
+  }),
+  registerPushToken: (token: string) =>
+    request<void>('/api/v1/drivers/push-token', {
+      method: 'POST',
+      body: JSON.stringify({ token })
+    }),
   getMyEarnings: () => request<DriverEarnings>('/api/v1/orders/driver/earnings'),
-  setAvailability: (available: boolean) =>
+  setAvailability: (available: boolean, position?: { lat: number; lng: number }) =>
     request<{ available: boolean }>('/api/v1/drivers/availability', {
       method: 'POST',
-      body: JSON.stringify({ available })
+      // Déstructuration explicite plutôt qu'un spread de `position` : ce
+      // dernier vient de getCurrentPositionOrNull() (lib/gps.ts), qui porte
+      // aussi un champ `timestamp` — TypeScript ne signale pas les
+      // propriétés en trop d'une variable (seulement d'un littéral), donc ce
+      // champ passait silencieusement jusqu'au serveur, dont le schema Zod
+      // `.strict()` rejette toute clé inconnue avec un 400 générique.
+      body: JSON.stringify(
+        position === undefined ? { available } : { available, lat: position.lat, lng: position.lng }
+      )
     }),
-  sendAvailabilityHeartbeat: () => request<void>('/api/v1/drivers/heartbeat', { method: 'POST' })
+  // `request` envoie toujours Content-Type: application/json. Fastify refuse
+  // un corps JSON absent avec cet en-tête, donc le heartbeat transmet un objet vide.
+  sendAvailabilityHeartbeat: () => request<void>('/api/v1/drivers/heartbeat', {
+    method: 'POST',
+    body: JSON.stringify({})
+  }),
+  getOrderRoute: (orderId: string) =>
+    request<{ geometry: OrderRouteGeometry }>(`/api/v1/orders/${orderId}/route`),
+  getDispatchOffer: (offerId: string) =>
+    request<{ offer: DispatchOffer; order: DriverOrder }>(`/api/v1/dispatch-offers/${offerId}`),
+  acceptDispatchOffer: (offerId: string, expectedVersion: number) =>
+    request<void>(`/api/v1/dispatch-offers/${offerId}/accept`, {
+      method: 'POST',
+      body: JSON.stringify({ expectedVersion })
+    }),
+  rejectDispatchOffer: (offerId: string, expectedVersion: number) =>
+    request<void>(`/api/v1/dispatch-offers/${offerId}/reject`, {
+      method: 'POST',
+      body: JSON.stringify({ expectedVersion })
+    })
 };
