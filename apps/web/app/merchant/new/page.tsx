@@ -1,6 +1,7 @@
 'use client'
 
 import dynamic from 'next/dynamic'
+import Link from 'next/link'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -9,6 +10,7 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { AddressAutocomplete, type AddressSuggestion } from '@/components/address-autocomplete'
 import { PriceCard, type PriceCardStatus, type PriceEstimate } from '@/components/price-card'
+import { COD_MAX_CENTS, COD_MIN_CENTS, parseEurosToCents } from '@/lib/cash-on-delivery'
 import type { GeoJsonLineString } from '@/components/delivery-map'
 import { useToast } from '@/components/toast-provider'
 import { createSupabaseBrowserClient } from '@/lib/supabase/client'
@@ -34,6 +36,16 @@ const FRENCH_MOBILE_REGEX = /^(?:\+33\s?|0)[67](?:[\s.-]?\d{2}){4}$/
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const ADDRESS_DEBOUNCE_MS = 500
 const ASAP_ESTIMATE_MINUTES = 15
+
+// Garde temporaire désactivée : l'onboarding commerçant se construit
+// progressivement (Informations du commerce → légal/facturation → Stripe →
+// ...) et onboardingCompleted ne pourra passer à true qu'à la toute fin de
+// ce parcours. En attendant, un compte incomplet doit pouvoir demander une
+// livraison pour permettre de tester Locadely pendant le développement.
+// La même garde est temporairement désactivée côté backend. Repasser à `true`
+// une fois l'onboarding complet pour réactiver le blocage ici et dans le use
+// case de création de commande.
+const ENFORCE_ONBOARDING_GATE = false
 
 type CollectionKind = 'asap' | 'delay' | 'scheduled'
 
@@ -67,6 +79,9 @@ export default function NewOrderPage() {
   const [addressComplement, setAddressComplement] = useState('')
   const [orderDetails, setOrderDetails] = useState('')
   const [deliveryInstructions, setDeliveryInstructions] = useState('')
+  const [codEnabled, setCodEnabled] = useState(false)
+  const [codAmount, setCodAmount] = useState('')
+  const [codTouched, setCodTouched] = useState(false)
 
   const [phoneTouched, setPhoneTouched] = useState(false)
   const [emailTouched, setEmailTouched] = useState(false)
@@ -77,6 +92,9 @@ export default function NewOrderPage() {
   const [geometry, setGeometry] = useState<GeoJsonLineString | undefined>(undefined)
 
   const [merchantLocation, setMerchantLocation] = useState<{ lat: number; lng: number } | undefined>(undefined)
+  // undefined = pas encore su (on ne bloque pas pendant le chargement, pour
+  // ne pas faire clignoter le bouton chez un commerçant déjà onboardé).
+  const [onboardingCompleted, setOnboardingCompleted] = useState<boolean | undefined>(undefined)
 
   const [collectionKind, setCollectionKind] = useState<CollectionKind>('asap')
   const [currentTime, setCurrentTime] = useState(() => new Date())
@@ -104,6 +122,8 @@ export default function NewOrderPage() {
 
   const phoneValid = FRENCH_MOBILE_REGEX.test(phone.trim())
   const emailValid = email.trim().length === 0 || EMAIL_REGEX.test(email.trim())
+  const codAmountCents = codEnabled ? parseEurosToCents(codAmount) : null
+  const codValid = !codEnabled || codAmountCents !== null
 
   useEffect(() => {
     const interval = window.setInterval(() => setCurrentTime(new Date()), 60_000)
@@ -127,6 +147,11 @@ export default function NewOrderPage() {
           headers: { authorization: `Bearer ${token}` }
         })
         const body: unknown = await response.json()
+
+        if (!cancelled && response.ok && isRecord(body) && typeof body.onboardingCompleted === 'boolean') {
+          setOnboardingCompleted(body.onboardingCompleted)
+        }
+
         const parsed = parseMerchantLocation(body)
         if (!cancelled && response.ok && parsed !== null) {
           setMerchantLocation(parsed)
@@ -280,6 +305,9 @@ export default function NewOrderPage() {
     setAddressComplement('')
     setOrderDetails('')
     setDeliveryInstructions('')
+    setCodEnabled(false)
+    setCodAmount('')
+    setCodTouched(false)
     setCollectionKind('asap')
     setDelayMinutes(30)
     setDelayEstimatedAt(undefined)
@@ -343,10 +371,12 @@ export default function NewOrderPage() {
     customerName.trim().length > 0 &&
     phoneValid &&
     emailValid &&
+    codValid &&
     address.trim().length > 0 &&
     deliveryCoords !== undefined &&
     priceStatus === 'success' &&
     pickupSchedule !== undefined &&
+    (!ENFORCE_ONBOARDING_GATE || onboardingCompleted !== false) &&
     !isSubmitting
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -382,7 +412,8 @@ export default function NewOrderPage() {
           pickupScheduledAt: pickupSchedule,
           ...(orderDetails.trim().length > 0 ? { orderDetails: orderDetails.trim() } : {}),
           ...(deliveryInstructions.trim().length > 0 ? { deliveryInstructions: deliveryInstructions.trim() } : {}),
-          ...(addressComplement.trim().length > 0 ? { deliveryAddressComplement: addressComplement.trim() } : {})
+          ...(addressComplement.trim().length > 0 ? { deliveryAddressComplement: addressComplement.trim() } : {}),
+          ...(codEnabled && codAmountCents !== null ? { cashOnDelivery: { amountCents: codAmountCents } } : {})
         })
       })
       const body: unknown = await response.json()
@@ -501,6 +532,48 @@ export default function NewOrderPage() {
           </section>
 
           <section>
+            <h2 className="mb-3 text-h3 font-semibold text-stone-800">Paiement à la livraison</h2>
+            <div className="flex flex-wrap gap-2">
+              {([false, true] as const).map((enabled) => (
+                <button
+                  key={String(enabled)}
+                  type="button"
+                  aria-pressed={codEnabled === enabled}
+                  onClick={() => setCodEnabled(enabled)}
+                  className={cn(
+                    'rounded-lg border px-4 py-2 text-body-sm font-medium transition-colors duration-fast ease-default',
+                    codEnabled === enabled
+                      ? 'border-primary-600 bg-primary-50 text-primary-700'
+                      : 'border-border text-stone-600 hover:bg-stone-50'
+                  )}
+                >
+                  {enabled ? 'Oui' : 'Non'}
+                </button>
+              ))}
+            </div>
+            {codEnabled && (
+              <div className="mt-3">
+                <Input
+                  label="Montant à encaisser (€)"
+                  inputMode="decimal"
+                  autoComplete="off"
+                  placeholder="50,00"
+                  value={codAmount}
+                  onChange={(event) => setCodAmount(event.target.value)}
+                  onBlur={() => setCodTouched(true)}
+                  error={
+                    codTouched && !codValid
+                      ? `Montant entre ${(COD_MIN_CENTS / 100).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} € et ${(COD_MAX_CENTS / 100).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} €`
+                      : undefined
+                  }
+                  hint="Encaissé par carte bancaire à la remise par le livreur. Non modifiable après la création."
+                  required
+                />
+              </div>
+            )}
+          </section>
+
+          <section>
             <h2 className="mb-3 text-h3 font-semibold text-stone-800">Collecte</h2>
             <div className="flex flex-wrap gap-2">
               <button
@@ -550,6 +623,16 @@ export default function NewOrderPage() {
 
             <p className="mt-3 text-body-sm font-semibold text-primary-700">{collectionConfirmationLabel()}</p>
           </section>
+
+          {ENFORCE_ONBOARDING_GATE && onboardingCompleted === false && (
+            <p className="rounded-md bg-accent-100 px-3.5 py-2.5 text-body-sm text-accent-800">
+              Finalisez votre compte dans{' '}
+              <Link href="/merchant/account" className="font-semibold underline">
+                Mon Compte
+              </Link>{' '}
+              pour pouvoir demander une livraison.
+            </p>
+          )}
 
           <Button type="submit" size="lg" fullWidth disabled={!canSubmit} className="mt-1">
             {isSubmitting ? (

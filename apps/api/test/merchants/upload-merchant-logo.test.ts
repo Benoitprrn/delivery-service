@@ -6,7 +6,7 @@ describe('UploadMerchantLogoUseCase', () => {
     const upload = vi.fn().mockResolvedValue('https://storage.example/merchant-logos/merchants/merchant-1/logo')
     const updateLogoUrl = vi.fn().mockResolvedValue({ id: 'merchant-1' })
     const useCase = new UploadMerchantLogoUseCase(
-      { findById: vi.fn(), update: vi.fn(), updateLogoUrl },
+      { findById: vi.fn(), createIncomplete: vi.fn(), updateInformation: vi.fn(), updateLogoUrl },
       { upload }
     )
 
@@ -17,7 +17,7 @@ describe('UploadMerchantLogoUseCase', () => {
 
   it.each(['image/gif', 'text/plain'])('rejects an unsupported content type', async (contentType) => {
     const useCase = new UploadMerchantLogoUseCase(
-      { findById: vi.fn(), update: vi.fn(), updateLogoUrl: vi.fn() },
+      { findById: vi.fn(), createIncomplete: vi.fn(), updateInformation: vi.fn(), updateLogoUrl: vi.fn() },
       { upload: vi.fn() }
     )
 

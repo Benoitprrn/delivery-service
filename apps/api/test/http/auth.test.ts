@@ -25,6 +25,12 @@ describe('authentication', () => {
     expect(response.statusCode).toBe(401)
   })
 
+  it('keeps only merchant signup public under /api/v1/auth', async () => {
+    const response = await app.inject({ method: 'POST', url: '/api/v1/auth/merchant-signup', payload: {} })
+    expect(response.statusCode).toBe(400)
+    expect(response.json()).toMatchObject({ error: 'ValidationError' })
+  })
+
   it('rejects an API request with an invalid bearer token', async () => {
     const response = await app.inject({
       method: 'POST',

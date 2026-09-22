@@ -1,9 +1,15 @@
 import { ZodError } from 'zod'
 import {
+  CashOnDeliveryAlreadyCollectedError,
+  CardPaymentsNotReadyError,
+  DriverPayoutAccountNotReadyError,
+  MerchantPaymentSetupIncompleteError,
+  CashOnDeliveryPaymentRequiredError,
   DeliveryOutsideZoneError,
   InvalidTransitionError,
   InvalidZoneAssignmentError,
   MerchantNotFoundError,
+  MerchantOnboardingIncompleteError,
   OrderConflictError,
   OrderNotFoundError,
   OrderRouteAccessDeniedError,
@@ -19,7 +25,7 @@ import {
   AddressNotFoundError,
   GeocodingProviderResponseError,
   GeocodingUnavailableError
-} from '../../ports/geocoding-provider.js'
+} from '../../../geocoding/public.js'
 import {
   RouteNotFoundError,
   RoutingProviderResponseError,
@@ -50,6 +56,10 @@ function mappedError(statusCode: number, error: Error, correlationId: string): H
 }
 
 export function mapErrorToHttp(error: unknown, correlationId: string): HttpError {
+  if (error instanceof CashOnDeliveryPaymentRequiredError || error instanceof CashOnDeliveryAlreadyCollectedError || error instanceof CardPaymentsNotReadyError || error instanceof MerchantPaymentSetupIncompleteError) {
+    return mappedError(409, error, correlationId)
+  }
+  if (error instanceof DriverPayoutAccountNotReadyError) return mappedError(403, error, correlationId)
   if (error instanceof DeliveryCodeInvalidError) {
     return {
       statusCode: 422,
@@ -75,6 +85,7 @@ export function mapErrorToHttp(error: unknown, correlationId: string): HttpError
     error instanceof InvalidTransitionError ||
     error instanceof InvalidZoneAssignmentError ||
     error instanceof DeliveryOutsideZoneError ||
+    error instanceof MerchantOnboardingIncompleteError ||
     error instanceof PastPickupScheduleError ||
     error instanceof InvalidProofOfDeliveryError ||
     error instanceof AddressNotFoundError

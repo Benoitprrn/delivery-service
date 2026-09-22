@@ -1,6 +1,6 @@
 'use client'
 
-import { Camera, Clock, Euro, Link2, MapPin, Phone, Route, UserRound } from 'lucide-react'
+import { Camera, Clock, CreditCard, Link2, MapPin, Phone, Route, UserRound } from 'lucide-react'
 import { useToast } from '@/components/toast-provider'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import {
@@ -134,6 +134,12 @@ export function OrderModal({ order, onOpenChange }: OrderModalProps) {
                 <div className="space-y-2 text-body text-stone-700">
                   <p className="flex items-center gap-2"><Clock className="h-4 w-4 text-stone-400" />Collecte : {formatPickupScheduledAt(order.pickupScheduledAt)}</p>
                   <p className="flex items-center gap-2"><Route className="h-4 w-4 text-stone-400" />{formatDistanceKm(order.distanceM)} km · {formatDurationMin(order.durationS)} min · <span className="font-semibold">{hasChargeablePrice(order.status) ? `${formatPriceEuros(order.priceCents)} € HT` : '—'}</span></p>
+                                  {order.cashOnDelivery?.required === true && order.cashOnDelivery.amountCents !== null && (
+                    <p className="flex items-center gap-2 font-medium text-stone-800">
+                      <CreditCard className="h-4 w-4 text-stone-400" />
+                      Paiement à la livraison : {formatPriceEuros(order.cashOnDelivery.amountCents)} €{order.cashOnDelivery.collected ? ' (encaissé)' : ' (à encaisser)'}
+                    </p>
+                  )}
                 </div>
               </Section>
 

@@ -1,0 +1,34 @@
+{
+ "runId": "r90-20260922-4",
+ "restaurants": {
+  "R2": {
+   "id": "90000000-0000-4000-8000-000000000002",
+   "name": "R90 Resto 02",
+   "account": "acct_1UIUj0FFbkpecbJC",
+   "paymentMethod": "pm_1UIUj1FQRP26Sx1vpSUSxUKt",
+   "mandate": "mandate_1UIUj1FQRP26Sx1vdqEqXops"
+  },
+  "R1": {
+   "id": "4e5d4a73-4adb-48f3-87e0-1142c1301400",
+   "name": "Restaurant R90 (test)",
+   "account": "acct_1UIUj0JzLSIgQGeC",
+   "paymentMethod": "pm_1UIUj1FQRP26Sx1vd5VNYDQi",
+   "mandate": "mandate_1UIUj1FQRP26Sx1vX7orz9Uw"
+  }
+ },
+ "drivers": {
+  "Dindividual": {
+   "id": "0cb67c0e-90bd-4802-a332-231309b1d942",
+   "name": "Livreur R90 Individual (test)",
+   "account": "acct_1UITZnJuqKzWHSLL"
+  },
+  "Dcompany": {
+   "id": "c6e662d9-2278-4bcc-99a5-43512eeac5e8",
+   "name": "Livreur R90 Company (test)",
+   "account": "acct_1UITqqFNXbmcyPQI"
+  }
+ },
+ "orders": {
+  "settleable": 6
+ }
+}

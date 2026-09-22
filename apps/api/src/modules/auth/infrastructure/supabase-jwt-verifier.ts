@@ -6,6 +6,7 @@ import type { JwtVerifier } from '../ports/jwt-verifier.js'
 
 const authenticatedUserPayloadSchema = z.object({
   sub: z.string().min(1),
+  email: z.string().email().optional(),
   app_metadata: z.object({
     role: z.enum(['merchant', 'driver', 'admin'])
   })
@@ -34,7 +35,8 @@ export class SupabaseJwtVerifier implements JwtVerifier {
 
       return {
         id: parsedPayload.data.sub,
-        role: parsedPayload.data.app_metadata.role
+        role: parsedPayload.data.app_metadata.role,
+        ...(parsedPayload.data.email === undefined ? {} : { email: parsedPayload.data.email })
       }
     } catch (error) {
       if (error instanceof UnauthorizedError) {

@@ -83,7 +83,10 @@ fi
 echo "[3/5] Vérification de VROOM…"
 vroom_ready=false
 for attempt in {1..10}; do
-  if curl --fail --silent --show-error --max-time 2 "$vroom_health_url" -o /dev/null; then
+  # Un refus de connexion est normal pendant le démarrage du conteneur.
+  # Ne l'affichons pas à chaque tentative : le message d'erreur ci-dessous
+  # reste la source unique si VROOM n'est jamais prêt.
+  if curl --fail --silent --max-time 2 "$vroom_health_url" -o /dev/null; then
     vroom_ready=true
     break
   fi
@@ -105,7 +108,9 @@ popd >/dev/null
 api_ready=false
 api_wait_start=$SECONDS
 for attempt in {1..30}; do
-  if curl --fail --silent --show-error --max-time 1 http://localhost:3000/health -o /dev/null; then
+  # `tsx watch` peut nécessiter plusieurs secondes pour compiler au premier
+  # lancement. Un curl en échec dans cette fenêtre n'est pas une erreur API.
+  if curl --fail --silent --max-time 1 http://localhost:3000/health -o /dev/null; then
     api_ready=true
     break
   fi
@@ -133,7 +138,9 @@ web_pid=$!
 
 web_ready=false
 for attempt in {1..60}; do
-  if curl --fail --silent --show-error --max-time 2 http://localhost:4000/login -o /dev/null; then
+  # Next.js prépare son bundle initial avant d'ouvrir le port : même règle que
+  # pour l'API, les sondes intermédiaires doivent être silencieuses.
+  if curl --fail --silent --max-time 2 http://localhost:4000/login -o /dev/null; then
     web_ready=true
     break
   fi

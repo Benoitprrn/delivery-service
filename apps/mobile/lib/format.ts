@@ -7,7 +7,42 @@ export function formatDurationMin(durationS: number): string {
 }
 
 export function formatPriceEuros(priceCents: number): string {
-  return `${(priceCents / 100).toFixed(2).replace('.', ',')} €`;
+  const sign = priceCents < 0 ? '-' : '';
+  const absoluteCents = Math.abs(priceCents);
+  return `${sign}${Math.trunc(absoluteCents / 100)},${String(absoluteCents % 100).padStart(2, '0')} €`;
+}
+
+function parisDateParts(isoDate: string): { day: string; month: string; year: string } | null {
+  // Les bornes de période sont des jours calendaires (`YYYY-MM-DD`) : les
+  // interpréter à midi UTC évite qu’un décalage Europe/Paris les fasse basculer.
+  const calendarMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate);
+  const date = calendarMatch === null
+    ? new Date(isoDate)
+    : new Date(Date.UTC(Number(calendarMatch[1]), Number(calendarMatch[2]) - 1, Number(calendarMatch[3]), 12));
+  if (Number.isNaN(date.getTime())) return null;
+  const parts = new Intl.DateTimeFormat('fr-FR', {
+    timeZone: 'Europe/Paris', day: 'numeric', month: 'long', year: 'numeric'
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return typeof values.day === 'string' && typeof values.month === 'string' && typeof values.year === 'string'
+    ? { day: values.day, month: values.month, year: values.year }
+    : null;
+}
+
+export function formatSettlementDate(isoDate: string): string {
+  const parts = parisDateParts(isoDate);
+  return parts === null ? 'date inconnue' : `${parts.day} ${parts.month} ${parts.year}`;
+}
+
+export function formatSettlementPeriod(periodStart: string, periodEnd: string): string {
+  const start = parisDateParts(periodStart);
+  // La fin d'une période est EXCLUSIVE (lundi 00:00 Paris suivant) : le dernier jour affiché est la veille.
+  const endTime = new Date(periodEnd).getTime();
+  const end = parisDateParts(Number.isNaN(endTime) ? periodEnd : new Date(endTime - 12 * 3_600_000).toISOString());
+  if (start === null || end === null) return 'Période clôturée';
+  return start.month === end.month && start.year === end.year
+    ? `du ${start.day} au ${end.day} ${end.month}`
+    : `du ${start.day} ${start.month} au ${end.day} ${end.month}`;
 }
 
 // Historique du wallet : une commande terminée il y a plusieurs jours n'a

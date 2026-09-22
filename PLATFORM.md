@@ -429,7 +429,7 @@ Une zone (Bourg-en-Bresse, centre 46.2058/5.2255, rayon 10 km), un commerçant (
 | Clé | TTL | Rôle |
 |---|---|---|
 | `driver:${driverId}:is_available` | 600s (10 min), renouvelé par heartbeat via `EXPIRE` (ne recrée pas une clé expirée) | disponibilité "vive" du livreur — source de vérité au-dessus de `drivers.is_available` (colonne Postgres obsolète) |
-| `driver:${driverId}:collected_count` | aucun | compteur de capacité (commandes actives), incrémenté/décrémenté à l'assignation/complétion, jamais négatif |
+| `driver:${driverId}:collected_count` | aucun | compteur technique de commandes actives, incrémenté/décrémenté à l'assignation/complétion, jamais négatif ; il ne participe pas à l'éligibilité du dispatch |
 | `driver:{${driverId}}:current_position` | 300s (5 min) | dernière position GPS connue, JSON `{lat,lng,recordedAt}` |
 | `driver:{${driverId}}:last_known_position` | aucun | fallback si `current_position` a expiré |
 | `drivers:position_ids` | aucun | index global (Set) des livreurs ayant une position enregistrée, utilisé pour la recherche par rayon |
@@ -611,7 +611,7 @@ L'**index unique partiel** `dispatch_offers_one_active_per_driver` est le mécan
 1. **Déclenchement** : `order.created.v1` (via l'outbox) appelle `StartDispatchUseCase.execute(orderId)`. Idempotent (no-op si une offre active existe déjà) ; abandonne silencieusement si la commande n'est plus `AVAILABLE`.
 2. **Groupage (round 0, `radiusKm = null`)** : cherche des livreurs ayant déjà une commande active pour le **même commerçant** avec une heure de collecte dans une fenêtre de 30 minutes (`GROUPAGE_WINDOW_MINUTES`), excluant les livreurs déjà tentés, ne retenant que ceux avec une position connue.
 3. **Escalade de rayon** : si le groupage échoue, tente successivement 1 km, 2 km, 3 km via `findAvailableWithinRadius` (Valkey, index de position + haversine), triés par distance croissante au point de collecte.
-4. **Pour chaque candidat** (`NotifyNextCandidateUseCase`, séquentiel — un seul candidat testé à la fois) : vérifie disponibilité + capacité (`< 2` commandes actives), demande à VROOM si le candidat peut honorer ses commandes en cours **plus** la nouvelle (`checkFeasibility`). Premier candidat faisable → crée l'offre (`repository.createOffer`, expiration = `now + 60s` par défaut, `DISPATCH_OFFER_TTL_SECONDS`), planifie l'expiration via pg-boss, arrête la boucle.
+4. **Pour chaque candidat** (`NotifyNextCandidateUseCase`, séquentiel — un seul candidat testé à la fois) : vérifie uniquement la disponibilité, transmet à VROOM toutes les étapes restantes (`ASSIGNED`, `COLLECTED`, `RETURNING`) avec la nouvelle commande, puis laisse VROOM valider les fenêtres et la capacité physique. Premier candidat faisable → crée l'offre (`repository.createOffer`, expiration = `now + 60s` par défaut, `DISPATCH_OFFER_TTL_SECONDS`), planifie l'expiration via pg-boss, arrête la boucle.
 5. **Réponse du livreur** (`POST /dispatch-offers/:id/accept|reject`) ou **expiration** (job pg-boss) : `accept` bascule l'offre `ACCEPTED` (CAS) puis assigne la commande (`AssignOrderUseCase`, CAS indépendant — **écart documenté explicitement dans le code** : si l'assignation échoue après acceptation de l'offre, la réconciliation est différée, non automatisée) ; `reject`/`expire` enregistrent une tentative (`dispatch_attempts`) puis relancent immédiatement `StartDispatchUseCase` pour le candidat suivant.
 6. **Épuisement** : si tous les rounds échouent sans candidat faisable, `orders.markDispatchFailed` marque `metadata.dispatch_failed = true` et émet `order.dispatch_failed.v1` (→ notifie le commerçant en Socket.io, room `merchant_${id}`).
 7. **Panne VROOM** : si VROOM est injoignable, le run de dispatch est abandonné silencieusement, sans exclure de livreur ni marquer d'échec — le filet de sécurité est le cron de réconciliation pg-boss (5 min).
@@ -625,12 +625,17 @@ L'**index unique partiel** `dispatch_offers_one_active_per_driver` est le mécan
     "start": [driverLng, driverLat], "end": [driverLng, driverLat]
   }],
   "shipments": [{
-    "pickup":   { "id": N, "location": [pickupLng, pickupLat],   "service": 60, "time_windows": [[pickupAt, pickupAt]] },
-    "delivery": { "id": N, "location": [deliveryLng, deliveryLat], "service": 60, "time_windows": [[deliveryAt, deliveryAt + 600]] }
+    "pickup":   { "id": N, "location": [pickupLng, pickupLat],   "service": 60, "time_windows": [[pickupAt, pickupAt + 300]] },
+    "delivery": { "id": N, "location": [deliveryLng, deliveryLat], "service": 60, "time_windows": [[deliveryAt, deliveryAt + 600]] },
+    "amount": [1]
+  }],
+  "jobs": [{
+    "id": N, "location": [remainingDestinationLng, remainingDestinationLat],
+    "service": 60, "delivery": [1], "time_windows": [[deliveryAt, deliveryAt + 600]]
   }]
 }
 ```
-`service: 60` (1 min de service à chaque arrêt), `capacity: [2]` (2 commandes simultanées max par livreur — cohérent avec le seuil de capacité utilisé côté application), `profile: 'bike'` (obligatoire — VROOM par défaut sur `"car"`, non déclaré côté serveur, ce qui provoquerait une 400 mal classée). La requête HTTP vers VROOM est bornée à **5000 ms** (`AbortSignal.timeout(5_000)`, vérifié dans `vroom-dispatch-planner.ts`) — plus court que le `timeout: 300000` déclaré côté configuration VROOM elle-même (`infra/vroom/config.yml`), donc c'est bien le client API qui impose la limite pratique. Résultat non faisable si `unassigned.length > 0`.
+`ASSIGNED` est envoyé comme un `shipment` pickup → livraison avec `amount: [1]`. `COLLECTED` devient un `job` de livraison seule au client avec `delivery: [1]` : selon la sémantique VROOM, cette unité est déjà chargée au départ. `RETURNING` est le même job de livraison seule, mais sa destination restante est le restaurant. Ainsi, VROOM ne recrée jamais de pickup pour un colis déjà porté et conserve sa charge jusqu'à la livraison ou au retour. `pickupAt` est une borne de début : VROOM ne peut pas collecter avant, mais peut commencer jusqu'à cinq minutes après. `service: 60` (1 min) reste appliqué à **chaque** pickup, y compris lorsque plusieurs commandes sont collectées au même restaurant. `amount: [1]` donne à chaque shipment une unité de charge ; avec `capacity: [2]`, VROOM garantit donc au plus deux colis simultanés dans le véhicule, même avec plus de deux commandes planifiées. `collected_count` n'est plus utilisé pour présélectionner ni accepter un candidat. `profile: 'bike'` est obligatoire — VROOM utilise `"car"` par défaut, profil non déclaré côté serveur. La requête HTTP vers VROOM est bornée à **5000 ms** (`AbortSignal.timeout(5_000)`, vérifié dans `vroom-dispatch-planner.ts`) — plus court que le `timeout: 300000` déclaré côté configuration VROOM elle-même (`infra/vroom/config.yml`), donc c'est bien le client API qui impose la limite pratique. Résultat non faisable si `unassigned.length > 0`.
 
 **Refus d'offre — champ `reason` non exploité** : le corps `POST /dispatch-offers/:id/reject` accepte un champ `reason` libre optionnel (validé par Zod, 1 à 500 caractères), mais `RejectDispatchOfferUseCase` enregistre toujours la tentative avec un motif fixe littéral `'refused'` dans `dispatch_attempts` — le texte fourni par le livreur n'est ni persisté ni utilisé ailleurs dans le code lu.
 
@@ -649,7 +654,7 @@ Les deux signaux sont **explicitement dissociés** : un livreur peut être dispo
 | Clé | TTL | Détail |
 |---|---|---|
 | `driver:${driverId}:is_available` | 600s, renouvelé par `EXPIRE` (heartbeat) | ne ressuscite jamais une clé déjà expirée — l'absence de heartbeat pendant >600s rend le livreur indisponible sans écriture explicite |
-| `driver:${driverId}:collected_count` | aucun | compteur de capacité (0..2) |
+| `driver:${driverId}:collected_count` | aucun | compteur technique de commandes actives ; il n'est pas une limite de capacité physique ni un critère d'éligibilité |
 | `driver:{${driverId}}:current_position` | 300s | position GPS "chaude" |
 | `driver:{${driverId}}:last_known_position` | aucun | fallback après expiration de la position chaude |
 | `drivers:position_ids` | aucun | index Set utilisé pour la recherche par rayon |

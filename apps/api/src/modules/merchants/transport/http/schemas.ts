@@ -5,16 +5,12 @@ const frenchPhone = /^(?:\+33\s?|0)[1-9](?:[\s.-]?\d{2}){4}$/
 export const updateMerchantBodySchema = z
   .object({
     name: z.string().trim().min(1),
-    phoneLandline: z.string().trim().regex(frenchPhone, 'Invalid French phone number').nullable(),
-    phoneMobile: z.string().trim().regex(frenchPhone, 'Invalid French phone number').nullable(),
-    logoUrl: z.string().url().nullable(),
-    address: z.string().trim().min(1),
-    lat: z.number().min(-90).max(90),
-    lng: z.number().min(-180).max(180)
+    phonePrimary: z.string().trim().regex(frenchPhone, 'Invalid French phone number'),
+    phoneSecondary: z.string().trim().regex(frenchPhone, 'Invalid French phone number').nullable().optional(),
+    address: z.string().trim().min(1)
   })
   .strict()
-  .superRefine((value, context) => {
-    if (value.phoneLandline === null && value.phoneMobile === null) {
-      context.addIssue({ code: 'custom', message: 'At least one phone number is required', path: ['phoneLandline'] })
-    }
-  })
+
+const postalAddressSchema = z.object({ line1: z.string().trim().min(1), line2: z.string().trim().min(1).nullable().optional().transform((value) => value ?? null), postalCode: z.string().trim().min(1), city: z.string().trim().min(1), countryCode: z.string().trim().length(2).default('FR'), communeCode: z.string().trim().min(1).nullable().optional().transform((value) => value ?? null) }).strict()
+export const sireneLookupBodySchema = z.object({ siret: z.string().trim().min(1) }).strict()
+export const updateLegalInformationBodySchema = z.object({ siret: z.string().trim().min(1), legalName: z.string().trim().min(1), legalAddress: postalAddressSchema, billingAddress: postalAddressSchema.nullable().optional(), vatNumber: z.string().trim().min(1).nullable().optional() }).strict()

@@ -10,4 +10,6 @@ export const BLUE_500 = '#3B82F6';
 export const STONE_200 = '#E7E5E4';
 export const STONE_500 = '#78716C';
 export const STONE_800 = '#292524';
+export const AMBER_700 = '#A16207';
+export const RED_700 = '#B91C1C';
 export const WHITE = '#FFFFFF';

@@ -13,7 +13,9 @@ import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { AuthProvider, useAuth } from '../lib/auth-context';
+import { PayoutAccountProvider } from '../lib/payout-account-context';
 import { usePushNotifications } from '../lib/push-notifications';
+import { TerminalProvider } from '../lib/terminal/terminal-provider';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -27,7 +29,9 @@ export default function RootLayout() {
 
   return (
     <AuthProvider>
-      <AppShell fontsLoaded={fontsLoaded} />
+      <TerminalProvider>
+        <AppShell fontsLoaded={fontsLoaded} />
+      </TerminalProvider>
     </AuthProvider>
   );
 }
@@ -58,12 +62,14 @@ function AppShell({ fontsLoaded }: { fontsLoaded: boolean }) {
     // bon endroit" sinon la garde les referme immédiatement après ouverture.
     const inOrderModal = segments[0] === 'order';
     const inDispatchOfferModal = segments[0] === 'dispatch-offer';
+    // Écrans « Mes paiements » (compte Stripe du livreur) : routes racine authentifiées, ouvertes depuis la Carte et le Wallet.
+    const inPayoutScreens = segments[0] === 'paiements';
     const onLoginScreen = segments[0] === 'login';
     const isAuthorizedDriver = status === 'signedIn' && role === 'driver';
 
     if (!isAuthorizedDriver && !onLoginScreen) {
       router.replace('/login');
-    } else if (isAuthorizedDriver && !inTabsGroup && !inOrderModal && !inDispatchOfferModal) {
+    } else if (isAuthorizedDriver && !inTabsGroup && !inOrderModal && !inDispatchOfferModal && !inPayoutScreens) {
       router.replace('/(tabs)/map');
     }
   }, [ready, status, role, segments, router]);
@@ -74,11 +80,13 @@ function AppShell({ fontsLoaded }: { fontsLoaded: boolean }) {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
+      <PayoutAccountProvider enabled={status === 'signedIn' && role === 'driver'}>
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="order/[id]/index" options={{ presentation: 'modal' }} />
         <Stack.Screen name="order/[id]/proof" options={{ presentation: 'modal' }} />
         <Stack.Screen name="dispatch-offer/[id]/index" options={{ presentation: 'modal', gestureEnabled: false }} />
       </Stack>
+      </PayoutAccountProvider>
     </GestureHandlerRootView>
   );
 }

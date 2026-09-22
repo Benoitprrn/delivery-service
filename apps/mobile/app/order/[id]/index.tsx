@@ -1,9 +1,8 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Bike, CalendarDays, CircleX, Clock, Euro, MapPin, PackageCheck, Phone, Route, Store, Undo2, X } from 'lucide-react-native';
+import { Bike, CalendarDays, CircleX, Clock, Euro, MapPin, PackageCheck, Phone, Route, Store, Undo2, X, CreditCard } from 'lucide-react-native';
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
 import { useState } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { SliderButton } from '../../../components/SliderButton';
 import { api } from '../../../lib/api';
 import { EMERALD_600, STONE_500, WHITE } from '../../../lib/colors';
 import {
@@ -85,16 +84,6 @@ export default function OrderDetailModal() {
   const order = parseOrder(orderParam);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  async function handleAssign() {
-    if (order === null) return;
-    await api.assignOrder(order.id, order.version);
-  }
-
-  function handleSuccess() {
-    showToast('Course prise ✓');
-    router.back();
-  }
-
   async function handleCollect() {
     if (order === null) return;
     setIsSubmitting(true);
@@ -111,7 +100,14 @@ export default function OrderDetailModal() {
 
   function handleComplete() {
     if (order === null) return;
-    router.push({ pathname: '/order/[id]/proof', params: { id: order.id, version: String(order.version) } });
+    router.push({ pathname: '/order/[id]/proof', params: {
+        id: order.id,
+        version: String(order.version),
+        ...(order.cashOnDelivery?.required === true && order.cashOnDelivery.amountCents !== null
+          ? { codAmountCents: String(order.cashOnDelivery.amountCents) }
+          : {})
+      }
+    });
   }
 
   async function handleConfirmReturn() {
@@ -269,6 +265,21 @@ export default function OrderDetailModal() {
           </View>
         )}
 
+        {order.cashOnDelivery?.required === true && order.cashOnDelivery.amountCents !== null && (
+          <View className="mb-3 rounded-xl border border-border bg-stone-100 p-4">
+            <View className="flex-row items-center gap-2">
+              <CreditCard size={24} color={STONE_500} />
+              <Text className="flex-1 font-sans-bold text-h3 text-stone-800">
+                Paiement à la livraison — {formatPriceEuros(order.cashOnDelivery.amountCents)}
+              </Text>
+            </View>
+            <Text className="mt-1 font-sans text-body-lg text-stone-600">
+              {order.cashOnDelivery.collected
+                ? 'Encaissé par carte.'
+                : 'À encaisser par carte au moment de la remise, avec le code du client.'}
+            </Text>
+          </View>
+        )}
         <View className="flex-row items-center justify-between rounded-2xl border border-border bg-surface p-4">
           <View className="flex-row items-center gap-1.5">
             <Route size={18} color={STONE_500} />
@@ -285,11 +296,6 @@ export default function OrderDetailModal() {
         </View>
       </ScrollView>
 
-      {order.status === 'AVAILABLE' && (
-        <View className="px-page-mobile pb-6 pt-2">
-          <SliderButton label="Glisser pour prendre →" onComplete={handleAssign} onSuccess={handleSuccess} />
-        </View>
-      )}
       {order.status === 'ASSIGNED' && (
         <View className="px-page-mobile pb-6 pt-2">
           <Pressable

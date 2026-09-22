@@ -14,3 +14,9 @@ infra/osrm/data/
 .gstack/
 google-services.json
 GoogleService-Info.plist
+*.tsbuildinfo
+*.zip
+# Cache local d'outillage agent (skills téléchargés, état de session) — jamais projet, régénérable
+.agents/
+.claude/
+skills-lock.json

@@ -1,4 +1,5 @@
 import type { OrderStatus } from './order-status.js'
+import type { OrderCashOnDelivery } from '@delivery-service/shared'
 
 export type Actor = {
   type: 'merchant' | 'driver' | 'system'
@@ -37,6 +38,7 @@ export type Order = {
   distanceM: number
   durationS: number
   priceCents: number
+  cashOnDelivery: OrderCashOnDelivery
   deliveryProofMethod: DeliveryProofMethod | null
   assignedAt: Date | null
   collectedAt: Date | null
@@ -77,3 +79,13 @@ export type DriverHistoryOrder = DriverOrder & {
 }
 
 export type AvailableOrder = DriverOrder
+
+/** Read model used by cash-on-delivery completion only. */
+export type OrderForDriver = {
+  id: string
+  merchantId: string
+  driverId: string
+  status: OrderStatus
+  version: number
+  cashOnDelivery: OrderCashOnDelivery
+}

@@ -1,6 +1,6 @@
 import type { DriverOrder, Order } from '../../orders/public.js'
 import { DispatchOfferConflictError, DispatchPlannerUnavailableError } from '../domain/errors.js'
-import type { DispatchPlanner, DispatchShipment } from '../ports/dispatch-planner.js'
+import type { DispatchDeliveryJob, DispatchPlanner, DispatchShipment } from '../ports/dispatch-planner.js'
 import type { DispatchRepository } from '../ports/dispatch-repository.js'
 
 export type DispatchCandidate = { driverId: string; lat: number; lng: number }
@@ -15,7 +15,6 @@ type OrdersFacade = {
 
 type DriversFacade = {
   isAvailable(driverId: string): Promise<boolean>
-  getCapacity(driverId: string): Promise<number>
 }
 
 function shipment(order: Pick<Order, 'id' | 'pickupLat' | 'pickupLng' | 'deliveryLat' | 'deliveryLng' | 'pickupScheduledAt' | 'createdAt' | 'durationS'>): DispatchShipment {
@@ -27,6 +26,15 @@ function shipment(order: Pick<Order, 'id' | 'pickupLat' | 'pickupLng' | 'deliver
     pickupScheduledAt,
     deliveryWindowStart: new Date(pickupScheduledAt.getTime() + order.durationS * 1_000)
   }
+}
+
+function deliveryJob(order: Pick<Order, 'id' | 'status' | 'pickupLat' | 'pickupLng' | 'deliveryLat' | 'deliveryLng' | 'pickupScheduledAt' | 'createdAt' | 'durationS'>): DispatchDeliveryJob {
+  const pickupScheduledAt = order.pickupScheduledAt ?? order.createdAt
+  const deliveryWindowStart = new Date(pickupScheduledAt.getTime() + order.durationS * 1_000)
+  const deliveryLocation = order.status === 'RETURNING'
+    ? { lat: order.pickupLat, lng: order.pickupLng }
+    : { lat: order.deliveryLat, lng: order.deliveryLng }
+  return { orderId: order.id, deliveryLocation, deliveryWindowStart }
 }
 
 export class NotifyNextCandidateUseCase {
@@ -41,15 +49,19 @@ export class NotifyNextCandidateUseCase {
 
   public async execute(order: Order, round: number, radiusKm: number | null, candidates: readonly DispatchCandidate[]): Promise<boolean> {
     for (const candidate of candidates) {
-      const [available, capacity] = await Promise.all([
-        this.drivers.isAvailable(candidate.driverId), this.drivers.getCapacity(candidate.driverId)
-      ])
-      if (!available || capacity >= 2) continue
+      if (!(await this.drivers.isAvailable(candidate.driverId))) continue
 
       const existingOrders = await this.orders.getDriverOrders(candidate.driverId)
+      const existingShipments = existingOrders
+        .filter((existingOrder) => existingOrder.status === 'ASSIGNED')
+        .map(shipment)
+      const existingDeliveryJobs = existingOrders
+        .filter((existingOrder) => existingOrder.status === 'COLLECTED' || existingOrder.status === 'RETURNING')
+        .map(deliveryJob)
       const feasibility = await this.planner.checkFeasibility({
         driver: { id: candidate.driverId, location: { lat: candidate.lat, lng: candidate.lng } },
-        existingShipments: existingOrders.map(shipment),
+        existingShipments,
+        existingDeliveryJobs,
         candidateShipment: shipment(order)
       })
       if (!feasibility.feasible) continue

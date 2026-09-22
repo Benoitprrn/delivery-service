@@ -5,14 +5,15 @@ export async function proxy(request: NextRequest) {
   const { response, user } = await updateSession(request)
   const { pathname } = request.nextUrl
 
-  if (pathname.startsWith('/merchant') && user === null) {
+  if ((pathname.startsWith('/merchant') || pathname.startsWith('/admin')) && user === null) {
     const loginUrl = new URL('/login', request.url)
     return NextResponse.redirect(loginUrl)
   }
 
-  if (pathname === '/login' && user !== null) {
-    const merchantUrl = new URL('/merchant/new', request.url)
-    return NextResponse.redirect(merchantUrl)
+  if ((pathname === '/login' || pathname === '/signup') && user !== null) {
+    // Un opérateur (rôle `admin` dans les métadonnées Supabase) arrive sur la page d'administration des règlements.
+    const target = user.app_metadata?.role === 'admin' ? '/admin/settlements' : '/merchant/new'
+    return NextResponse.redirect(new URL(target, request.url))
   }
 
   return response

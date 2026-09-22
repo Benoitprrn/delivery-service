@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { cashOnDeliveryInputSchema } from '@delivery-service/shared'
 
 const uuid = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, 'Invalid UUID')
 const expectedVersion = z.number().int().min(1)
@@ -20,7 +21,8 @@ export const createOrderBodySchema = z
     deliveryAddressComplement: z.string().trim().min(1).optional(),
     deliveryAddress: z.string().trim().min(1),
     deliveryLat: z.number().min(-90).max(90),
-    deliveryLng: z.number().min(-180).max(180)
+    deliveryLng: z.number().min(-180).max(180),
+    cashOnDelivery: cashOnDeliveryInputSchema.optional()
   })
   .strict()
 

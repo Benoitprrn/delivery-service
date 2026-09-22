@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { ClipboardList, Menu, PackagePlus, PanelLeftClose, PanelLeftOpen, Settings, X, type LucideIcon } from 'lucide-react'
+import { ClipboardList, Menu, PackagePlus, PanelLeftClose, PanelLeftOpen, Settings, Wallet, X, type LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { SignOutButton } from '@/components/sign-out-button'
 
@@ -16,6 +16,7 @@ type NavItem = {
 const navItems: NavItem[] = [
   { href: '/merchant/new', label: 'Demander une livraison', icon: PackagePlus },
   { href: '/merchant/orders', label: 'Mes Livraisons', icon: ClipboardList },
+  { href: '/merchant/settlements', label: 'Règlements', icon: Wallet },
   { href: '/merchant/account', label: 'Mon Compte', icon: Settings }
 ]
 
@@ -41,7 +42,7 @@ export function Sidebar({ email }: SidebarProps) {
         >
           <Menu className="h-5 w-5" />
         </button>
-        <span className="text-h3 font-bold text-primary-600">Terminus</span>
+        <span className="text-h3 font-bold text-primary-600">Locadely</span>
       </div>
 
       {mobileOpen && (
@@ -61,7 +62,7 @@ export function Sidebar({ email }: SidebarProps) {
         )}
       >
         <div className={cn('flex items-center justify-between gap-2 border-b border-border px-4 py-4', collapsed && 'md:justify-center md:px-2')}>
-          <span className={cn('text-h3 font-bold text-primary-600', collapsed && 'md:hidden')}>Terminus</span>
+          <span className={cn('text-h3 font-bold text-primary-600', collapsed && 'md:hidden')}>Locadely</span>
 
           <button
             type="button"

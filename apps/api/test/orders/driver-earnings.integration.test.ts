@@ -8,7 +8,7 @@ const merchantId = '22222222-2222-2222-2222-222222222222'
 const zoneId = '11111111-1111-1111-1111-111111111111'
 const createdOrderIds: string[] = []
 const createdDriverIds: string[] = []
-const orders = createOrdersModule(pool, config.OSRM_URL, config.OPENCAGE_API_KEY)
+const orders = createOrdersModule(pool, config.OSRM_URL, async () => ({ lat: 46.2058, lng: 5.2255 }))
 
 afterEach(async () => {
   if (createdOrderIds.length > 0) {

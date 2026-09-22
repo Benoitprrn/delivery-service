@@ -1,3 +1,5 @@
+import type { OrderCashOnDelivery } from '@/lib/cash-on-delivery'
+
 export type OrderStatus =
   | 'CREATED'
   | 'AVAILABLE'
@@ -49,6 +51,9 @@ export type Order = {
   distanceM: number
   durationS: number
   priceCents: number
+  // Paiement à la livraison (snapshot figé à la création). Optionnel tant que l'API
+  // ne l'a pas déployé partout ; absent = pas de COD.
+  cashOnDelivery?: OrderCashOnDelivery
   deliveryProofMethod: DeliveryProofMethod | null
   assignedAt: string | null
   collectedAt: string | null

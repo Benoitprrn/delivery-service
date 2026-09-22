@@ -18,7 +18,9 @@ type OrdersHttpRoutesOptions = {
   orders: Omit<ReturnType<typeof createOrdersModule>,
     'getOrderTracking' | 'findActiveTrackingTokensByDriverId' |
     'findDriversWithActiveOrderForMerchant' | 'recordDispatchAttempt' | 'markDispatchFailed' |
-    'findOrderById' | 'findDispatchMetadata' | 'findStuckAvailableOrders'
+    'findOrderById' | 'findDispatchMetadata' | 'findStuckAvailableOrders' |
+    'findOrderForDriver' | 'verifyDeliveryCodeForCompletion' |
+    'completeCollectedCashOnDeliveryInTransaction' | 'releaseDriverCapacity' | 'listSettleableOrders' | 'countPreGoLiveFinalizedOrders'
   > &
     Partial<Pick<ReturnType<typeof createOrdersModule>, 'getOrderTracking'>>
   findMerchantById: ReturnType<typeof createMerchantsModule>['findMerchantById']
@@ -49,17 +51,19 @@ export async function registerOrderHttpRoutes(
   app.post('/api/v1/orders', async (request, reply) => {
     try {
       const body = createOrderBodySchema.parse(request.body)
+      if (request.authUser?.role !== 'merchant') {
+        return reply.code(403).send({ error: 'ForbiddenError', message: 'Only merchants can create orders', correlationId: request.correlationId })
+      }
+      if (body.merchantId !== request.authUser.id) {
+        return reply.code(403).send({ error: 'ForbiddenError', message: 'Merchants can only create orders for their own account', correlationId: request.correlationId })
+      }
       const { merchantId, ...command } = body
       const merchant = await options.findMerchantById(merchantId)
       if (merchant === null) {
         throw new MerchantNotFoundError(`Merchant ${merchantId} not found`)
       }
 
-      const zone = await options.findZoneById(merchant.zoneId)
-      if (zone === null) {
-        throw new Error(`Zone ${merchant.zoneId} not found`)
-      }
-
+      const zone = merchant.zoneId === null ? null : await options.findZoneById(merchant.zoneId)
       const order = await options.orders.createOrder({
         ...command,
         merchant,
@@ -109,11 +113,7 @@ export async function registerOrderHttpRoutes(
         throw new MerchantNotFoundError(`Merchant ${merchantId} not found`)
       }
 
-      const zone = await options.findZoneById(merchant.zoneId)
-      if (zone === null) {
-        throw new Error(`Zone ${merchant.zoneId} not found`)
-      }
-
+      const zone = merchant.zoneId === null ? null : await options.findZoneById(merchant.zoneId)
       const estimate = await options.orders.estimateOrder({ merchant, zone, deliveryAddress })
       return reply.code(200).send(estimate)
     } catch (error) {

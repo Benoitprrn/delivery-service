@@ -1,11 +1,11 @@
 import { createServer, type Server } from 'node:http'
 import { afterEach, describe, expect, it } from 'vitest'
-import { OpenCageGeocodingProvider } from '../../src/modules/orders/infrastructure/opencage-geocoding-provider.js'
+import { OpenCageGeocodingProvider } from '../../src/modules/geocoding/public.js'
 import {
   AddressNotFoundError,
   GeocodingProviderResponseError,
   GeocodingUnavailableError
-} from '../../src/modules/orders/ports/geocoding-provider.js'
+} from '../../src/modules/geocoding/public.js'
 import { config } from '../../src/platform/config.js'
 
 let responseServer: Server | undefined

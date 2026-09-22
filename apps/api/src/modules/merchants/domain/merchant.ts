@@ -1,11 +1,16 @@
 export type Merchant = {
   id: string
   name: string
-  zoneId: string
-  address: string
-  phoneLandline: string | null
-  phoneMobile: string | null
+  zoneId: string | null
+  address: string | null
+  phonePrimary: string | null
+  phoneSecondary: string | null
   logoUrl: string | null
-  lat: number
-  lng: number
+  lat: number | null
+  lng: number | null
+  onboardingCompleted: boolean
+}
+
+export function isMerchantInformationComplete(merchant: Merchant): boolean {
+  return merchant.name.trim() !== '' && merchant.address !== null && merchant.address.trim() !== '' && merchant.lat !== null && merchant.lng !== null && merchant.zoneId !== null && merchant.phonePrimary !== null && merchant.phonePrimary.trim() !== ''
 }

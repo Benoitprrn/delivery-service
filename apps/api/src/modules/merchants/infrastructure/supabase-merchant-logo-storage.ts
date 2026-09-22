@@ -7,7 +7,7 @@ export class SupabaseMerchantLogoStorage implements MerchantLogoStorage {
 
   public async upload(logo: MerchantLogo): Promise<string> {
     if (this.serviceRoleKey === undefined) {
-      throw new Error('SUPABASE_SERVICE_ROLE_KEY is required to upload merchant logos')
+      throw new Error('SUPABASE_SECRET_KEY is required to upload merchant logos')
     }
     const path = `merchants/${logo.merchantId}/logo`
     const response = await fetch(`${this.supabaseUrl}/storage/v1/object/${BUCKET}/${path}`, {

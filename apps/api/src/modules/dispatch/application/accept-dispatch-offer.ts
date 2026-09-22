@@ -9,7 +9,6 @@ type OrdersFacade = {
 
 type DriversFacade = {
   isAvailable(driverId: string): Promise<boolean>
-  getCapacity(driverId: string): Promise<number>
 }
 
 export class AcceptDispatchOfferUseCase {
@@ -24,17 +23,13 @@ export class AcceptDispatchOfferUseCase {
     if (offer === null || offer.driverId !== driverId) {
       throw new DispatchOfferConflictError(`Dispatch offer ${offerId} does not belong to driver ${driverId}`)
     }
-    // Revalidated before accept(): ACTIVE -> ACCEPTED has no way back. Checking
-    // after acceptance would strand the offer ACCEPTED with no assignment and
-    // no active offer left to expire/retry — orphaning the order, not just
-    // rejecting the driver. Checking first lets a failed revalidation leave
-    // the offer ACTIVE, so the existing TTL-based expiry still reaches it.
-    const [available, capacity] = await Promise.all([
-      this.drivers.isAvailable(driverId),
-      this.drivers.getCapacity(driverId)
-    ])
+    // Availability is revalidated before accept(): ACTIVE -> ACCEPTED has no
+    // way back. Checking after acceptance would strand the offer ACCEPTED with
+    // no assignment and no active offer left to expire/retry — orphaning the
+    // order, not just rejecting the driver. Checking first lets a failed
+    // availability check leave the offer ACTIVE for TTL-based expiry.
+    const available = await this.drivers.isAvailable(driverId)
     if (!available) throw new DispatchOfferConflictError(`Driver ${driverId} is no longer available`)
-    if (capacity >= 2) throw new DispatchOfferConflictError(`Driver ${driverId} has reached the maximum active-order capacity`)
     const accepted = await this.repository.accept(offerId, expectedVersion)
     const order = await this.orders.findOrderById(accepted.orderId)
     if (order === null) throw new DispatchOfferConflictError(`Order ${accepted.orderId} no longer exists`)

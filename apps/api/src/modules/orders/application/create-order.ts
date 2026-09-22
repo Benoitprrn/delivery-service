@@ -1,17 +1,23 @@
 import { randomUUID } from 'node:crypto'
 import type { Merchant } from '../../merchants/public.js'
 import type { Zone } from '../../zones/public.js'
-import { DeliveryOutsideZoneError } from '../domain/errors.js'
+import { isMerchantInformationComplete } from '../../merchants/public.js'
+import { CardPaymentsNotReadyError, DeliveryOutsideZoneError, MerchantOnboardingIncompleteError, MerchantPaymentSetupIncompleteError } from '../domain/errors.js'
 import { distanceInMeters } from '../domain/geo.js'
 import type { Order } from '../domain/order.js'
 import { resolvePickupScheduledAt, type PickupSchedule } from '../domain/pickup-schedule.js'
 import type { Clock } from '../ports/clock.js'
 import type { OrderRepository } from '../ports/order-repository.js'
 import type { RoutingProvider } from '../ports/routing-provider.js'
+import type { CardPaymentsReadiness } from '../ports/card-payments-readiness.js'
+import type { MerchantSettlementReadinessReader } from '../ports/merchant-settlement-readiness.js'
+
+// Temporary until the remaining legal, billing, Stripe and acceptance onboarding sections exist.
+const ENFORCE_ONBOARDING_GATE = false
 
 export type CreateOrderCommand = {
   merchant: Merchant
-  zone: Zone
+  zone: Zone | null
   customerName: string
   customerPhone: string
   customerEmail?: string | undefined
@@ -22,6 +28,7 @@ export type CreateOrderCommand = {
   orderDetails?: string | undefined
   deliveryInstructions?: string | undefined
   deliveryAddressComplement?: string | undefined
+  cashOnDelivery?: { amountCents: number } | undefined
   correlationId?: string
 }
 
@@ -29,17 +36,36 @@ export class CreateOrderUseCase {
   public constructor(
     private readonly orderRepository: OrderRepository,
     private readonly routingProvider: RoutingProvider,
-    private readonly clock: Clock
+    private readonly clock: Clock,
+    private readonly cardPayments: CardPaymentsReadiness = { isReady: async () => true },
+    // Défaut permissif réservé aux tests du module : `app.ts` injecte toujours la vraie garde (fail-closed).
+    private readonly settlementReadiness: MerchantSettlementReadinessReader = { check: async () => ({ ready: true }) }
   ) {}
 
   public async execute(command: CreateOrderCommand): Promise<Order> {
     const { merchant, zone } = command
+    if (
+      (ENFORCE_ONBOARDING_GATE && !merchant.onboardingCompleted) ||
+      merchant.zoneId === null || merchant.address === null || merchant.lat === null || merchant.lng === null ||
+      zone === null
+    ) throw new MerchantOnboardingIncompleteError()
+    // D-D : informations opérationnelles complètes (nom, adresse, zone, téléphone principal) puis SEPA actif + infos légales.
+    if (!isMerchantInformationComplete(merchant)) throw new MerchantOnboardingIncompleteError()
+    const settlement = await this.settlementReadiness.check(merchant.id)
+    if (!settlement.ready) throw new MerchantPaymentSetupIncompleteError(settlement.reason)
     const distanceToZoneCenterM = distanceInMeters(
       { lat: zone.centerLat, lng: zone.centerLng },
       { lat: command.deliveryLat, lng: command.deliveryLng }
     )
     if (distanceToZoneCenterM > zone.radiusKm * 1_000) {
       throw new DeliveryOutsideZoneError()
+    }
+    // Le paiement carte à la livraison exige un restaurant dont `card_payments` est actif (lecture hors transaction).
+    if (command.cashOnDelivery !== undefined) {
+      const cardPaymentsReady = await this.cardPayments.isReady(merchant.id)
+      if (!cardPaymentsReady) {
+        throw new CardPaymentsNotReadyError()
+      }
     }
     const pickupScheduledAt = resolvePickupScheduledAt(command.pickupScheduledAt, this.clock.now())
 
@@ -67,6 +93,7 @@ export class CreateOrderUseCase {
       deliveryLng: command.deliveryLng,
       distanceM: route.distanceM,
       durationS: route.durationS,
+      cashOnDeliveryAmountCents: command.cashOnDelivery?.amountCents ?? null,
       actor: { type: 'merchant', id: merchant.id },
       correlationId: command.correlationId ?? randomUUID()
     })

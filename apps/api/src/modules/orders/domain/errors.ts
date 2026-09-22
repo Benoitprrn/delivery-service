@@ -47,4 +47,53 @@ export class DeliveryOutsideZoneError extends Error {
   }
 }
 
+export class MerchantOnboardingIncompleteError extends Error {
+  public constructor(message = 'Merchant onboarding must be completed before creating orders or estimates') {
+    super(message)
+    this.name = 'MerchantOnboardingIncompleteError'
+  }
+}
+
+export class CashOnDeliveryPaymentRequiredError extends Error {
+  public constructor(message = 'Cash on delivery payment must be collected before completion') {
+    super(message)
+    this.name = 'CashOnDeliveryPaymentRequired'
+  }
+}
+
+export class CashOnDeliveryAlreadyCollectedError extends Error {
+  public constructor(message = 'Cash on delivery payment was already collected') {
+    super(message)
+    this.name = 'CashOnDeliveryAlreadyCollected'
+  }
+}
+
+export class CashOnDeliveryNotRequiredError extends Error {
+  public constructor(message = 'Order does not require cash on delivery') {
+    super(message)
+    this.name = 'CashOnDeliveryNotRequiredError'
+  }
+}
+
+export class CardPaymentsNotReadyError extends Error {
+  public constructor(message = 'Card payments must be active before creating a cash on delivery order') {
+    super(message)
+    this.name = 'CardPaymentsNotReady'
+  }
+}
+
 export { PastPickupScheduleError } from './pickup-schedule.js'
+
+export class MerchantPaymentSetupIncompleteError extends Error {
+  public constructor(public readonly reason: 'sepa_not_configured' | 'legal_information_incomplete', message = 'The merchant must have an active SEPA mandate and complete legal information before creating an order') {
+    super(message)
+    this.name = 'MerchantPaymentSetupIncomplete'
+  }
+}
+
+export class DriverPayoutAccountNotReadyError extends Error {
+  public constructor(message = 'The driver payout account must be ready before taking deliveries') {
+    super(message)
+    this.name = 'DriverPayoutAccountNotReady'
+  }
+}

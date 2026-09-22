@@ -16,7 +16,7 @@ export function registerAuthentication(app: FastifyInstance, options: { verifier
     }
 
     // The opaque order tracking token is the sole credential for this public route.
-    if (!request.url.startsWith('/api/v1/') || /^\/api\/v1\/orders\/track\/[^/?]+(?:\?.*)?$/.test(request.url)) {
+    if (!request.url.startsWith('/api/v1/') || /^\/api\/v1\/orders\/track\/[^/?]+(?:\?.*)?$/.test(request.url) || (request.method === 'POST' && (request.url === '/api/v1/auth/merchant-signup' || request.url === '/api/v1/webhooks/stripe' || request.url === '/api/v1/webhooks/stripe-connect'))) {
       return
     }
 

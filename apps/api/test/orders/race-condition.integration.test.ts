@@ -15,7 +15,7 @@ const merchantId = '22222222-2222-2222-2222-222222222222'
 const driverId = '33333333-3333-3333-3333-333333333333'
 const zoneId = '11111111-1111-1111-1111-111111111111'
 const otherDriverId = randomUUID()
-const orders = createOrdersModule(pool, config.OSRM_URL, config.OPENCAGE_API_KEY)
+const orders = createOrdersModule(pool, config.OSRM_URL, async () => ({ lat: 46.2058, lng: 5.2255 }))
 const { findMerchantById } = createMerchantsModule(pool)
 const { findZoneById } = createZonesModule(pool)
 
@@ -26,6 +26,7 @@ async function createOrder() {
   if (merchant === null) {
     throw new Error(`Merchant fixture ${merchantId} not found`)
   }
+  if (merchant.zoneId === null) throw new Error(`Merchant fixture ${merchantId} has no zone`)
   const zone = await findZoneById(merchant.zoneId)
   if (zone === null) {
     throw new Error(`Zone fixture ${merchant.zoneId} not found`)

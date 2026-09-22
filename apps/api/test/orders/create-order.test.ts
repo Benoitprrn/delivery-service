@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { CreateOrderUseCase } from '../../src/modules/orders/application/create-order.js'
-import { DeliveryOutsideZoneError } from '../../src/modules/orders/domain/errors.js'
+import { CardPaymentsNotReadyError, DeliveryOutsideZoneError, MerchantOnboardingIncompleteError } from '../../src/modules/orders/domain/errors.js'
 import type { Order } from '../../src/modules/orders/domain/order.js'
 import type { OrderRepository, CreateOrderInput } from '../../src/modules/orders/ports/order-repository.js'
 import type { RoutingProvider } from '../../src/modules/orders/ports/routing-provider.js'
@@ -10,11 +10,12 @@ const merchant = {
   zoneId: 'zone',
   name: 'Shop',
   address: '1 Main Street',
-  phoneLandline: '0',
-  phoneMobile: null,
+  phonePrimary: '0',
+  phoneSecondary: null,
   logoUrl: null,
   lat: 46.2,
-  lng: 5.22
+  lng: 5.22,
+  onboardingCompleted: true
 }
 const zone = { id: 'zone', name: 'Zone', centerLat: 46.2, centerLng: 5.22, radiusKm: 2 }
 const now = new Date('2026-09-13T10:00:00.000Z')
@@ -36,6 +37,17 @@ function command() {
 }
 
 describe('CreateOrderUseCase', () => {
+  it('allows an onboarding-incomplete merchant with complete geographic information', async () => {
+    const getRoute = vi.fn()
+    const create = vi.fn()
+    const useCase = new CreateOrderUseCase({ create } as unknown as OrderRepository, { getRoute } as unknown as RoutingProvider, { now: () => now })
+
+    getRoute.mockResolvedValue({ distanceM: 100, durationS: 30 })
+    create.mockResolvedValue({})
+    await expect(useCase.execute({ ...command(), merchant: { ...merchant, onboardingCompleted: false } })).resolves.toEqual({})
+    expect(getRoute).toHaveBeenCalled()
+    expect(create).toHaveBeenCalled()
+  })
   it('rejects deliveries outside the zone before routing', async () => {
     const getRoute = vi.fn()
     const create = vi.fn()
@@ -71,5 +83,25 @@ describe('CreateOrderUseCase', () => {
       deliveryInstructions: null,
       deliveryAddressComplement: null
     })
+  })
+
+  it('refuses cash on delivery when card payments are not active', async () => {
+    const getRoute = vi.fn()
+    const create = vi.fn()
+    const useCase = new CreateOrderUseCase({ create } as unknown as OrderRepository, { getRoute } as unknown as RoutingProvider, { now: () => now }, { isReady: async () => false })
+    await expect(useCase.execute({ ...command(), cashOnDelivery: { amountCents: 5000 } })).rejects.toBeInstanceOf(CardPaymentsNotReadyError)
+    expect(getRoute).not.toHaveBeenCalled()
+    expect(create).not.toHaveBeenCalled()
+  })
+
+  it('allows cash on delivery when card payments are active and leaves non-COD orders unaffected', async () => {
+    const getRoute = vi.fn(async () => ({ distanceM: 100, durationS: 30 }))
+    const create = vi.fn(async () => ({}))
+    const readiness = vi.fn(async () => true)
+    const useCase = new CreateOrderUseCase({ create } as unknown as OrderRepository, { getRoute } as unknown as RoutingProvider, { now: () => now }, { isReady: readiness })
+    await expect(useCase.execute({ ...command(), cashOnDelivery: { amountCents: 5000 } })).resolves.toEqual({})
+    await expect(useCase.execute(command())).resolves.toEqual({})
+    expect(readiness).toHaveBeenCalledTimes(1)
+    expect(create).toHaveBeenCalledTimes(2)
   })
 })

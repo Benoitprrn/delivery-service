@@ -10,7 +10,7 @@ const dmSans = DM_Sans({
 })
 
 export const metadata: Metadata = {
-  title: 'Terminus Livraison',
+  title: 'Locadely Livraison',
   description: 'Espace commerçant — service de livraison last-mile Bourg-en-Bresse'
 }
 

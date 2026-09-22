@@ -18,7 +18,7 @@ export type { DispatchOffer } from './domain/dispatch-offer.js'
 export type { DispatchAttempt, DispatchMetadata } from './domain/dispatch-metadata.js'
 export { DispatchOfferAccessDeniedError, DispatchOfferConflictError, DispatchOfferNotFoundError, DispatchPlannerUnavailableError } from './domain/errors.js'
 export type { DispatchRepository } from './ports/dispatch-repository.js'
-export type { DispatchLocation, DispatchPlanStep, DispatchPlanner, DispatchPlannerInput, DispatchShipment } from './ports/dispatch-planner.js'
+export type { DispatchDeliveryJob, DispatchLocation, DispatchPlanStep, DispatchPlanner, DispatchPlannerInput, DispatchShipment } from './ports/dispatch-planner.js'
 export { PostgresDispatchRepository } from './infrastructure/postgres-dispatch-repository.js'
 export { VroomDispatchPlanner } from './infrastructure/vroom-dispatch-planner.js'
 export { registerDispatchHttpRoutes } from './transport/http/routes.js'
@@ -29,7 +29,7 @@ type OrdersFacade = Pick<ReturnType<typeof createOrdersModule>,
   'recordDispatchAttempt' | 'assignOrder' | 'findDriverOrderById'
 >
 type DriversFacade = Pick<ReturnType<typeof createDriversModule>,
-  'isAvailable' | 'getCapacity' | 'findLatestDriverLocation' | 'findAvailableWithinRadius'
+  'isAvailable' | 'findLatestDriverLocation' | 'findAvailableWithinRadius'
 >
 
 export function createDispatchModule(pool: Pool, vroomUrl: string, orders: OrdersFacade, drivers: DriversFacade, pgBoss: PgBoss) {

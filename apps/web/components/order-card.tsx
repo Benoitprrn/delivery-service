@@ -1,4 +1,4 @@
-import { Clock, TriangleAlert } from 'lucide-react'
+import { Clock, CreditCard, TriangleAlert } from 'lucide-react'
 import {
   formatPickupScheduledAt,
   formatPriceEuros,
@@ -46,6 +46,15 @@ export function OrderCard({ order, onClick }: OrderCardProps) {
           {hasChargeablePrice(order.status) ? `${formatPriceEuros(order.priceCents)} €` : '—'}
         </span>
       </div>
+      {order.cashOnDelivery?.required === true && order.cashOnDelivery.amountCents !== null && (
+        <div className="mt-2 flex items-center gap-2 rounded-lg bg-stone-100 px-3 py-2">
+          <CreditCard className="h-4 w-4 shrink-0 text-stone-600" />
+          <span className="text-body-sm font-semibold text-stone-700">
+            Paiement à la livraison · {formatPriceEuros(order.cashOnDelivery.amountCents)} €
+            {order.cashOnDelivery.collected ? ' · encaissé ✓' : ''}
+          </span>
+        </div>
+      )}
       {order.status === 'AVAILABLE' && order.dispatchFailed && (
         <div className="mt-2 flex items-center gap-2 rounded-lg bg-red-50 px-3 py-2">
           <TriangleAlert className="h-4 w-4 shrink-0 text-red-600" />

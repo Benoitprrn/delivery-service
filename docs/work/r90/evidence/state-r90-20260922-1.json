@@ -1,0 +1,121 @@
+{
+ "runId": "r90-20260922-1",
+ "restaurants": {
+  "R1": {
+   "id": "4e5d4a73-4adb-48f3-87e0-1142c1301400",
+   "name": "Restaurant R90 (test)",
+   "behaviour": "succès",
+   "account": "acct_1UIFrlFY4FqAi7Ef",
+   "paymentMethod": "pm_1UIFrmFQRP26Sx1voqKZRNny",
+   "mandate": "mandate_1UIFrmFQRP26Sx1vrUB6INQI"
+  },
+  "R4": {
+   "id": "90000000-0000-4000-8000-000000000004",
+   "name": "R90 Resto 04",
+   "behaviour": "succès",
+   "account": "acct_1UIFrl2WqIRbQ5LL",
+   "paymentMethod": "pm_1UIFrmFQRP26Sx1vF3kAXcSV",
+   "mandate": "mandate_1UIFrmFQRP26Sx1vVbTnIzDR"
+  },
+  "R5": {
+   "id": "90000000-0000-4000-8000-000000000005",
+   "name": "R90 Resto 05",
+   "behaviour": "succès",
+   "account": "acct_1UIFrl2Xk5yEJw4E",
+   "paymentMethod": "pm_1UIFrmFQRP26Sx1vye3s9ZnD",
+   "mandate": "mandate_1UIFrmFQRP26Sx1vS0HttSve"
+  },
+  "R9": {
+   "id": "90000000-0000-4000-8000-000000000009",
+   "name": "R90 Resto 09",
+   "behaviour": "échec immédiat",
+   "account": "acct_1UIFrl2VsC2ivv47",
+   "paymentMethod": "pm_1UIFrmFQRP26Sx1vW412cPGJ",
+   "mandate": "mandate_1UIFrmFQRP26Sx1vV3gxEDUY"
+  },
+  "R8": {
+   "id": "90000000-0000-4000-8000-000000000008",
+   "name": "R90 Resto 08",
+   "behaviour": "succès puis litige",
+   "account": "acct_1UIFrl2YhXpK90Dy",
+   "paymentMethod": "pm_1UIFrmFQRP26Sx1vQvMAg9MN",
+   "mandate": "mandate_1UIFrmFQRP26Sx1vhpANgayx"
+  },
+  "R6": {
+   "id": "90000000-0000-4000-8000-000000000006",
+   "name": "R90 Resto 06",
+   "behaviour": "succès",
+   "account": "acct_1UIFrlJxQ6quVPLB",
+   "paymentMethod": "pm_1UIFrmFQRP26Sx1v75pcRVeY",
+   "mandate": "mandate_1UIFrmFQRP26Sx1vy3LrbB5s"
+  },
+  "R7": {
+   "id": "90000000-0000-4000-8000-000000000007",
+   "name": "R90 Resto 07",
+   "behaviour": "succès",
+   "account": "acct_1UIFrl2UVxPqlZZq",
+   "paymentMethod": "pm_1UIFrmFQRP26Sx1vYJgwDN13",
+   "mandate": "mandate_1UIFrmFQRP26Sx1vLdftVLmj"
+  },
+  "R2": {
+   "id": "22222222-2222-2222-2222-222222222222",
+   "name": "Restaurant Le Terminus",
+   "behaviour": "succès",
+   "account": "acct_1UIFrlF083ppSrck",
+   "paymentMethod": "pm_1UIFrmFQRP26Sx1vaiL5FLKt",
+   "mandate": "mandate_1UIFrnFQRP26Sx1v4k5ZbIKq"
+  },
+  "R10": {
+   "id": "90000000-0000-4000-8000-000000000010",
+   "name": "R90 Resto 10",
+   "behaviour": "échec différé",
+   "account": "acct_1UIFrl2Ugjd14Jkp",
+   "paymentMethod": "pm_1UIFrmFQRP26Sx1v4IspMFK4",
+   "mandate": "mandate_1UIFrnFQRP26Sx1vG14YfNPI"
+  },
+  "R3": {
+   "id": "90000000-0000-4000-8000-000000000003",
+   "name": "R90 Resto 03",
+   "behaviour": "succès",
+   "account": "acct_1UIFrl2WZIYxlVzi",
+   "paymentMethod": "pm_1UIFrnFQRP26Sx1vvVArkwg7",
+   "mandate": "mandate_1UIFrnFQRP26Sx1vpuWnAgWQ"
+  }
+ },
+ "drivers": {
+  "D5": {
+   "id": "90000000-0000-4000-8000-000000000105",
+   "name": "R90 Livreur 5",
+   "account": "acct_1UIFroF0FvZvsOR1",
+   "transfers": "active"
+  },
+  "D3": {
+   "id": "90000000-0000-4000-8000-000000000103",
+   "name": "R90 Livreur 3",
+   "account": "acct_1UIFroF3PYCPBs4m",
+   "transfers": "active"
+  },
+  "D4": {
+   "id": "90000000-0000-4000-8000-000000000104",
+   "name": "R90 Livreur 4",
+   "account": "acct_1UIFroFDuHWvy5t2",
+   "transfers": "active"
+  },
+  "D2": {
+   "id": "33333333-3333-3333-3333-333333333333",
+   "name": "Jean-Paul",
+   "account": "acct_1UIFroF1aZo8olfN",
+   "transfers": "active"
+  },
+  "D1": {
+   "id": "b69c6fb9-023d-4e72-b85b-b334c894feca",
+   "name": "Livreur R90 (test)",
+   "account": "acct_1UIFro2aAtFS8ans",
+   "transfers": "active"
+  }
+ },
+ "orders": {
+  "settleable": 27,
+  "preGoLive": 1
+ }
+}

@@ -1,4 +1,4 @@
-import { Clock, Euro, MapPin, Route, Store } from 'lucide-react-native';
+import { Clock, Euro, MapPin, Route, Store, CreditCard } from 'lucide-react-native';
 import type { ReactNode } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { formatDistanceKm, formatDurationMin, formatPickupLabel, formatPriceEuros } from '../lib/format';
@@ -74,6 +74,16 @@ export function OrderCard({
           </Text>
         </View>
       </View>
+
+      {order.cashOnDelivery?.required === true && order.cashOnDelivery.amountCents !== null && (
+        <View className="flex-row items-center gap-2 rounded-lg bg-stone-100 px-3 py-2">
+          <CreditCard size={20} color={STONE_500} />
+          <Text className="flex-1 font-sans-semibold text-body-lg text-stone-800">
+            Paiement à la livraison — {formatPriceEuros(order.cashOnDelivery.amountCents)}
+            {order.cashOnDelivery.collected ? ' · encaissé' : ''}
+          </Text>
+        </View>
+      )}
 
       <View className="flex-row flex-wrap items-center gap-4 border-t border-border pt-3">
         <View className="flex-row items-center gap-1.5">

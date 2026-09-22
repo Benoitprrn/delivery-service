@@ -46,6 +46,22 @@
           "isAndroidBackgroundLocationEnabled": true,
           "isAndroidForegroundServiceEnabled": true
         }
+      ],
+      [
+        "@stripe/stripe-terminal-react-native",
+        {
+          "locationWhenInUsePermission": "La localisation est requise pour utiliser le lecteur de cartes.",
+          "bluetoothPeripheralPermission": "Le Bluetooth est requis pour connecter le lecteur de cartes.",
+          "bluetoothAlwaysUsagePermission": "Cette application utilise le Bluetooth pour connecter le lecteur de cartes."
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 26
+          }
+        }
       ]
     ],
     "experiments": {

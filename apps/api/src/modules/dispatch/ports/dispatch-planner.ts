@@ -4,15 +4,24 @@ export type DispatchShipment = {
   orderId: string
   pickupLocation: DispatchLocation
   deliveryLocation: DispatchLocation
-  /** UTC instant used by VROOM as the fixed pickup time. */
+  /** UTC instant used by VROOM as the start of the pickup window. */
   pickupScheduledAt: Date
   /** UTC instant at which the delivery time window starts. */
+  deliveryWindowStart: Date
+}
+
+/** A parcel already carried by the driver, with only its remaining delivery. */
+export type DispatchDeliveryJob = {
+  orderId: string
+  deliveryLocation: DispatchLocation
+  /** UTC instant at which the remaining delivery time window starts. */
   deliveryWindowStart: Date
 }
 
 export type DispatchPlannerInput = {
   driver: { id: string; location: DispatchLocation }
   existingShipments: readonly DispatchShipment[]
+  existingDeliveryJobs: readonly DispatchDeliveryJob[]
   candidateShipment: DispatchShipment
 }
 

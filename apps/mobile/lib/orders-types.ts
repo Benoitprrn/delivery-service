@@ -12,6 +12,14 @@ export type OrderStatus =
   | 'RETURNING'
   | 'RETURNED';
 
+// Paiement à la livraison : snapshot figé à la création (voir packages/shared).
+export type OrderCashOnDelivery = {
+  required: boolean;
+  amountCents: number | null;
+  currency: 'eur' | null;
+  collected: boolean;
+};
+
 export type Order = {
   id: string;
   merchantId: string;
@@ -35,6 +43,8 @@ export type Order = {
   distanceM: number;
   durationS: number;
   priceCents: number;
+  // Optionnel tant que l'API n'est pas déployée partout ; absent = pas de COD.
+  cashOnDelivery?: OrderCashOnDelivery;
   assignedAt: string | null;
   collectedAt: string | null;
   completedAt: string | null;

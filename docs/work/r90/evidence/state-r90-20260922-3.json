@@ -1,0 +1,137 @@
+{
+ "runId": "r90-20260922-3",
+ "restaurants": {
+  "R1": {
+   "id": "4e5d4a73-4adb-48f3-87e0-1142c1301400",
+   "name": "Restaurant R90 (test)",
+   "behaviour": "succès",
+   "account": "acct_1UIFwHJx3VSBbSPY",
+   "paymentMethod": "pm_1UIFwIFQRP26Sx1vIJ39GTfR",
+   "mandate": "mandate_1UIFwIFQRP26Sx1vdsoqaIJT"
+  },
+  "R9": {
+   "id": "90000000-0000-4000-8000-000000000009",
+   "name": "R90 Resto 09",
+   "behaviour": "échec immédiat",
+   "account": "acct_1UIFwHFX7swFEUB4",
+   "paymentMethod": "pm_1UIFwIFQRP26Sx1vcSnVow61",
+   "mandate": "mandate_1UIFwIFQRP26Sx1vTXx69uCk"
+  },
+  "R7": {
+   "id": "90000000-0000-4000-8000-000000000007",
+   "name": "R90 Resto 07",
+   "behaviour": "succès",
+   "account": "acct_1UIFwHF8uneBc1qe",
+   "paymentMethod": "pm_1UIFwIFQRP26Sx1vcnG8DCwZ",
+   "mandate": "mandate_1UIFwIFQRP26Sx1vZgVHwXZ5"
+  },
+  "R8": {
+   "id": "90000000-0000-4000-8000-000000000008",
+   "name": "R90 Resto 08",
+   "behaviour": "succès puis litige",
+   "account": "acct_1UIFwHJzZnb7FIoD",
+   "paymentMethod": "pm_1UIFwIFQRP26Sx1vofcW4Lou",
+   "mandate": "mandate_1UIFwIFQRP26Sx1vPomrQMk2"
+  },
+  "R2": {
+   "id": "22222222-2222-2222-2222-222222222222",
+   "name": "Restaurant Le Terminus",
+   "behaviour": "succès",
+   "account": "acct_1UIFwHF7YkjjNxbS",
+   "paymentMethod": "pm_1UIFwIFQRP26Sx1vUnuwTcKU",
+   "mandate": "mandate_1UIFwIFQRP26Sx1vMkiDNkEL"
+  },
+  "R6": {
+   "id": "90000000-0000-4000-8000-000000000006",
+   "name": "R90 Resto 06",
+   "behaviour": "succès",
+   "account": "acct_1UIFwHF9PnBPssdF",
+   "paymentMethod": "pm_1UIFwIFQRP26Sx1vEwd0y1C8",
+   "mandate": "mandate_1UIFwIFQRP26Sx1v3RJaFTc6"
+  },
+  "R3": {
+   "id": "90000000-0000-4000-8000-000000000003",
+   "name": "R90 Resto 03",
+   "behaviour": "succès",
+   "account": "acct_1UIFwHF89coqCem6",
+   "paymentMethod": "pm_1UIFwIFQRP26Sx1v7j2NQnzG",
+   "mandate": "mandate_1UIFwIFQRP26Sx1vJIze5Cwv"
+  },
+  "R4": {
+   "id": "90000000-0000-4000-8000-000000000004",
+   "name": "R90 Resto 04",
+   "behaviour": "succès",
+   "account": "acct_1UIFwHF6tl4v3cd4",
+   "paymentMethod": "pm_1UIFwIFQRP26Sx1vGY6pA8rz",
+   "mandate": "mandate_1UIFwIFQRP26Sx1vjsTbzqMd"
+  },
+  "R10": {
+   "id": "90000000-0000-4000-8000-000000000010",
+   "name": "R90 Resto 10",
+   "behaviour": "échec différé",
+   "account": "acct_1UIFwHFAPyNLAHxT",
+   "paymentMethod": "pm_1UIFwIFQRP26Sx1vOEg9plob",
+   "mandate": "mandate_1UIFwIFQRP26Sx1vk4s5pvze"
+  },
+  "R5": {
+   "id": "90000000-0000-4000-8000-000000000005",
+   "name": "R90 Resto 05",
+   "behaviour": "succès",
+   "account": "acct_1UIFwHF9fNeC7tFL",
+   "paymentMethod": "pm_1UIFwIFQRP26Sx1v7PEHGre9",
+   "mandate": "mandate_1UIFwJFQRP26Sx1vdcKuizKi"
+  },
+  "R11": {
+   "id": "90000000-0000-4000-8000-000000000011",
+   "name": "R90 Resto 11",
+   "behaviour": "succès puis litige (semaine 2)",
+   "account": "acct_1UIGEf2X0rUxwYcF",
+   "paymentMethod": "pm_1UIGEhFQRP26Sx1vhwrCFniI",
+   "mandate": "mandate_1UIGEhFQRP26Sx1vGq9fnaBd"
+  },
+  "R12": {
+   "id": "90000000-0000-4000-8000-000000000012",
+   "name": "R90 Resto 12",
+   "behaviour": "succès (semaine 2)",
+   "account": "acct_1UIGEiJu2jhpYlLg",
+   "paymentMethod": "pm_1UIGEjFQRP26Sx1vBuMPi0zo",
+   "mandate": "mandate_1UIGEjFQRP26Sx1vdnM1TXfl"
+  }
+ },
+ "drivers": {
+  "D1": {
+   "id": "b69c6fb9-023d-4e72-b85b-b334c894feca",
+   "name": "Livreur R90 (test)",
+   "account": "acct_1UIFwJFZ8yClKjDa",
+   "transfers": "active"
+  },
+  "D3": {
+   "id": "90000000-0000-4000-8000-000000000103",
+   "name": "R90 Livreur 3",
+   "account": "acct_1UIFwJFYZyTWt6kS",
+   "transfers": "active"
+  },
+  "D5": {
+   "id": "90000000-0000-4000-8000-000000000105",
+   "name": "R90 Livreur 5",
+   "account": "acct_1UIFwJFJajHNsgFM",
+   "transfers": "active"
+  },
+  "D4": {
+   "id": "90000000-0000-4000-8000-000000000104",
+   "name": "R90 Livreur 4",
+   "account": "acct_1UIFwJF2jIzZwSMQ",
+   "transfers": "active"
+  },
+  "D2": {
+   "id": "33333333-3333-3333-3333-333333333333",
+   "name": "Jean-Paul",
+   "account": "acct_1UIFwJFb06WDkBN7",
+   "transfers": "active"
+  }
+ },
+ "orders": {
+  "settleable": 27,
+  "preGoLive": 1
+ }
+}

@@ -1,7 +1,7 @@
 import Fastify, { type FastifyInstance } from 'fastify'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildApp } from '../../src/app.js'
-import { OrderNotFoundError } from '../../src/modules/orders/domain/errors.js'
+import { CashOnDeliveryAlreadyCollectedError, CashOnDeliveryPaymentRequiredError, OrderNotFoundError } from '../../src/modules/orders/domain/errors.js'
 import { registerOrderHttpRoutes } from '../../src/modules/orders/transport/http/routes.js'
 
 const driverId = '33333333-3333-3333-3333-333333333333'
@@ -85,5 +85,24 @@ describe('GET /api/v1/orders/:id/route', () => {
     } finally {
       await authenticatedApp.close()
     }
+  })
+
+  it('maps COD finalization guards to stable 409 errors', async () => {
+    const completeOrder = vi.fn().mockRejectedValue(new CashOnDeliveryPaymentRequiredError())
+    const returnOrder = vi.fn().mockRejectedValue(new CashOnDeliveryAlreadyCollectedError())
+    await app.register(registerOrderHttpRoutes, {
+      orders: { ...orders(), completeOrder, returnOrder }, findMerchantById: vi.fn(), findZoneById: vi.fn(), findDriverById: vi.fn()
+    })
+
+    const complete = await app.inject({
+      method: 'POST', url: `/api/v1/orders/${orderId}/complete`,
+      payload: { expectedVersion: 1, proof: { method: 'code', code: '1234' } }
+    })
+    expect(complete.statusCode).toBe(409)
+    expect(complete.json()).toMatchObject({ error: 'CashOnDeliveryPaymentRequired', correlationId })
+
+    const returned = await app.inject({ method: 'POST', url: `/api/v1/orders/${orderId}/return`, payload: { expectedVersion: 1 } })
+    expect(returned.statusCode).toBe(409)
+    expect(returned.json()).toMatchObject({ error: 'CashOnDeliveryAlreadyCollected', correlationId })
   })
 })

@@ -1,5 +1,5 @@
 import { DispatchPlannerUnavailableError } from '../domain/errors.js'
-import type { DispatchPlanStep, DispatchPlanner, DispatchPlannerInput, DispatchShipment } from '../ports/dispatch-planner.js'
+import type { DispatchDeliveryJob, DispatchPlanStep, DispatchPlanner, DispatchPlannerInput, DispatchShipment } from '../ports/dispatch-planner.js'
 
 type VroomStep = {
   type: string
@@ -21,9 +21,15 @@ export class VroomDispatchPlanner implements DispatchPlanner {
 
   public async checkFeasibility(input: DispatchPlannerInput): Promise<{ feasible: true; steps: DispatchPlanStep[] } | { feasible: false }> {
     const shipments = [...input.existingShipments, input.candidateShipment]
+    const deliveryJobs = input.existingDeliveryJobs
     const shipmentIds = new Map<number, string>()
-    const vroomShipments = shipments.map((shipment, index) => {
+    const vroomJobs = deliveryJobs.map((job, index) => {
       const id = index + 1
+      shipmentIds.set(id, job.orderId)
+      return this.toVroomDeliveryJob(id, job)
+    })
+    const vroomShipments = shipments.map((shipment, index) => {
+      const id = deliveryJobs.length + index + 1
       shipmentIds.set(id, shipment.orderId)
       return this.toVroomShipment(id, shipment)
     })
@@ -49,6 +55,7 @@ export class VroomDispatchPlanner implements DispatchPlanner {
             start: [input.driver.location.lng, input.driver.location.lat],
             end: [input.driver.location.lng, input.driver.location.lat]
           }],
+          jobs: vroomJobs,
           shipments: vroomShipments
         }),
         signal: AbortSignal.timeout(5_000)
@@ -103,14 +110,26 @@ export class VroomDispatchPlanner implements DispatchPlanner {
         id,
         location: [shipment.pickupLocation.lng, shipment.pickupLocation.lat],
         service: 60,
-        time_windows: [[pickupAt, pickupAt]]
+        time_windows: [[pickupAt, pickupAt + 300]]
       },
       delivery: {
         id,
         location: [shipment.deliveryLocation.lng, shipment.deliveryLocation.lat],
         service: 60,
         time_windows: [[deliveryAt, deliveryAt + 600]]
-      }
+      },
+      amount: [1]
+    }
+  }
+
+  private toVroomDeliveryJob(id: number, job: DispatchDeliveryJob): object {
+    const deliveryAt = Math.floor(job.deliveryWindowStart.getTime() / 1_000)
+    return {
+      id,
+      location: [job.deliveryLocation.lng, job.deliveryLocation.lat],
+      service: 60,
+      delivery: [1],
+      time_windows: [[deliveryAt, deliveryAt + 600]]
     }
   }
 }

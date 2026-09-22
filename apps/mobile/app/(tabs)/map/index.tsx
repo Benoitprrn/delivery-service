@@ -8,6 +8,7 @@ import { FlatList } from 'react-native-gesture-handler';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Socket } from 'socket.io-client';
 import { AvailabilityToggle } from '../../../components/AvailabilityToggle';
+import { PayoutBanner } from '../../../components/PayoutBanner';
 import { ErrorState, LoadingState } from '../../../components/list-state';
 import { OrderCard } from '../../../components/order-card';
 import { api, ApiError, type OrderRouteGeometry } from '../../../lib/api';
@@ -422,6 +423,7 @@ export default function MyOrdersMapScreen() {
             <ChevronRight size={HEADER_ICON_SIZE} color={STONE_800} />
           </Pressable>
         </View>
+        <PayoutBanner />
       </View>
 
       <AvailabilityToggle />

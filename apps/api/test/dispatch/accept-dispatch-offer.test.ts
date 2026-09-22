@@ -26,19 +26,21 @@ describe('AcceptDispatchOfferUseCase', () => {
     const assignOrder = vi.fn(async () => undefined)
     const useCase = new AcceptDispatchOfferUseCase(repository(), {
       findOrderById: async () => ({ id: 'order-1', version: 2 }), assignOrder
-    }, { isAvailable: async () => false, getCapacity: async () => 0 })
+    }, { isAvailable: async () => false })
 
     await expect(useCase.execute('offer-1', 'driver-1', 1)).rejects.toBeInstanceOf(DispatchOfferConflictError)
     expect(assignOrder).not.toHaveBeenCalled()
   })
 
-  it('does not assign an offer when the driver has reached capacity', async () => {
+  it('assigns an offer without applying an active-order capacity limit', async () => {
     const assignOrder = vi.fn(async () => undefined)
     const useCase = new AcceptDispatchOfferUseCase(repository(), {
       findOrderById: async () => ({ id: 'order-1', version: 2 }), assignOrder
-    }, { isAvailable: async () => true, getCapacity: async () => 2 })
+    }, { isAvailable: async () => true })
 
-    await expect(useCase.execute('offer-1', 'driver-1', 1)).rejects.toBeInstanceOf(DispatchOfferConflictError)
-    expect(assignOrder).not.toHaveBeenCalled()
+    await expect(useCase.execute('offer-1', 'driver-1', 1)).resolves.toBeUndefined()
+    expect(assignOrder).toHaveBeenCalledWith(expect.objectContaining({
+      orderId: 'order-1', driverId: 'driver-1', expectedVersion: 2
+    }))
   })
 })

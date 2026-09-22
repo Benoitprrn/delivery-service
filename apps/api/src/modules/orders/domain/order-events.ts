@@ -18,7 +18,9 @@ export function buildOrderCreatedEvent(order: Order): DomainEvent {
     merchantId: order.merchantId,
     distanceM: order.distanceM,
     durationS: order.durationS,
-    priceCents: order.priceCents
+    priceCents: order.priceCents,
+    cashOnDeliveryRequired: order.cashOnDelivery.required,
+    cashOnDeliveryAmountCents: order.cashOnDelivery.amountCents
   })
 }
 

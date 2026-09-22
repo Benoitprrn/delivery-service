@@ -1,14 +1,14 @@
 import type { Merchant } from '../../merchants/public.js'
 import { computePriceCents } from '../../pricing/public.js'
 import type { Zone } from '../../zones/public.js'
-import { DeliveryOutsideZoneError } from '../domain/errors.js'
+import { DeliveryOutsideZoneError, MerchantOnboardingIncompleteError } from '../domain/errors.js'
 import { distanceInMeters } from '../domain/geo.js'
-import type { GeocodingProvider } from '../ports/geocoding-provider.js'
+import type { GeocodingProvider } from '../../geocoding/public.js'
 import type { RoutingProvider } from '../ports/routing-provider.js'
 
 export type EstimateOrderCommand = {
   merchant: Merchant
-  zone: Zone
+  zone: Zone | null
   deliveryAddress: string
 }
 
@@ -19,6 +19,10 @@ export class EstimateOrderUseCase {
   ) {}
 
   public async execute(command: EstimateOrderCommand) {
+    if (
+      command.merchant.lat === null || command.merchant.lng === null ||
+      command.zone === null
+    ) throw new MerchantOnboardingIncompleteError()
     const delivery = await this.geocodingProvider.geocode(command.deliveryAddress)
     const distanceToZoneCenterM = distanceInMeters(
       { lat: command.zone.centerLat, lng: command.zone.centerLng },

@@ -5,13 +5,18 @@ import { getMerchantAccessToken } from '../support/get-merchant-access-token.js'
 
 const seedMerchant = {
   name: 'Restaurant Le Terminus',
-  phoneLandline: '04 74 00 00 00',
-  phoneMobile: null,
+  phonePrimary: '04 74 00 00 00',
+  phoneSecondary: null,
   logoUrl: null,
   address: 'Place de la Grenette, 01000 Bourg-en-Bresse',
   lat: 46.2058,
-  lng: 5.2255
+  lng: 5.2255,
+  zoneId: '11111111-1111-1111-1111-111111111111',
+  merchantInformationCompleted: true,
+  onboardingCompleted: true
 }
+
+const { onboardingCompleted: _seedOnboardingCompleted, ...seedMerchantPatch } = seedMerchant
 
 let app: FastifyInstance
 let merchantAccessToken: string
@@ -46,60 +51,20 @@ describe('merchants HTTP endpoints', () => {
     expect(response.statusCode).toBe(401)
   })
 
-  it('updates and restores the authenticated merchant profile with a landline only', async () => {
-    const updatedMerchant = {
-      name: 'Restaurant Le Terminus Test',
-      phoneLandline: '04 74 11 22 33',
-      phoneMobile: null,
-      logoUrl: null,
-      address: '1 Rue du Test, 01000 Bourg-en-Bresse',
-      lat: 46.21,
-      lng: 5.23
-    }
+  it('rejects client-supplied coordinates rather than trusting them', async () => {
     const headers = { authorization: `Bearer ${merchantAccessToken}` }
-
-    try {
-      const updateResponse = await app.inject({
-        method: 'PATCH',
-        url: '/api/v1/merchants/me',
-        headers,
-        payload: updatedMerchant
-      })
-      expect(updateResponse.statusCode).toBe(200)
-      expect(updateResponse.json()).toEqual(updatedMerchant)
-    } finally {
-      const restoreResponse = await app.inject({
-        method: 'PATCH',
-        url: '/api/v1/merchants/me',
-        headers,
-        payload: seedMerchant
-      })
-      expect(restoreResponse.statusCode).toBe(200)
-      expect(restoreResponse.json()).toEqual(seedMerchant)
-    }
+    const response = await app.inject({ method: 'PATCH', url: '/api/v1/merchants/me', headers, payload: { name: 'Test', address: 'Test', phonePrimary: '04 74 11 22 33', lat: 0 } })
+    expect(response.statusCode).toBe(400)
   })
 
-  it('accepts a mobile phone without a landline', async () => {
-    const headers = { authorization: `Bearer ${merchantAccessToken}` }
-    const mobileOnlyMerchant = { ...seedMerchant, phoneLandline: null, phoneMobile: '06 12 34 56 78' }
-
-    try {
-      const response = await app.inject({ method: 'PATCH', url: '/api/v1/merchants/me', headers, payload: mobileOnlyMerchant })
-      expect(response.statusCode).toBe(200)
-      expect(response.json()).toEqual(mobileOnlyMerchant)
-    } finally {
-      await app.inject({ method: 'PATCH', url: '/api/v1/merchants/me', headers, payload: seedMerchant })
-    }
-  })
-
-  it('rejects an update without a landline or mobile phone', async () => {
+  it('requires a primary phone number', async () => {
     const response = await app.inject({
       method: 'PATCH',
       url: '/api/v1/merchants/me',
       headers: { authorization: `Bearer ${merchantAccessToken}` },
-      payload: { ...seedMerchant, phoneLandline: null, phoneMobile: null }
+      payload: { name: 'Test', address: 'Test' }
     })
 
-    expect(response.statusCode).toBe(422)
+    expect(response.statusCode).toBe(400)
   })
 })
