@@ -3,6 +3,7 @@ import {
   formatPickupScheduledAt,
   formatPriceEuros,
   hasChargeablePrice,
+  orderTotalCents,
   STATUS_CONFIG,
   type Order
 } from '@/lib/orders'
@@ -43,7 +44,7 @@ export function OrderCard({ order, onClick }: OrderCardProps) {
           <p className="mt-1.5 truncate text-body-sm text-stone-500">{order.deliveryAddress}</p>
         </div>
         <span className="shrink-0 text-body font-semibold text-stone-800">
-          {hasChargeablePrice(order.status) ? `${formatPriceEuros(order.priceCents)} €` : '—'}
+          {hasChargeablePrice(order.status) ? `${formatPriceEuros(orderTotalCents(order))} €` : '—'}
         </span>
       </div>
       {order.cashOnDelivery?.required === true && order.cashOnDelivery.amountCents !== null && (

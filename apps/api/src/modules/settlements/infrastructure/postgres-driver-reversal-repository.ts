@@ -3,6 +3,7 @@ import type { Pool, PoolClient } from 'pg'
 import type { ReversalPlan, ReversalReasonCode, ReversalRequest } from '../domain/reversal-decision.js'
 import { ReversalApproverError } from '../domain/errors.js'
 import type { ReversalCategory } from '../domain/reversal.js'
+import { clampAttributedReversalCents, computeCumulativeServiceRefundCents, isServiceRefundEligible } from '../domain/service-refund.js'
 import type { DriverReversalRepository, RequestReversalResult, ReversalRecord, ReversalWork } from '../ports/driver-reversal.js'
 
 type RecordRow = { id: string; driver_transfer_id: string; category: ReversalCategory; reason_code: ReversalReasonCode; reason: string; decision_reference: string; amount_cents: string; order_id: string | null; requested_by: string; approved_by: string | null; status: ReversalRecord['status']; reversed_cents: string | null; planned_reverse_cents: string | null; planned_receivable_cents: string | null; stripe_reversal_id: string | null; failure_code: string | null }
@@ -157,6 +158,26 @@ export class PostgresDriverReversalRepository implements DriverReversalRepositor
       if (row === undefined) return 'lost_claim' as const
       if (Number(row.receivable) > 0) {
         await client.query('insert into driver_receivables(driver_id, driver_transfer_reversal_id, amount_cents) values($1::uuid, $2::uuid, $3::bigint)', [row.driver_id, input.reversalId, row.receivable])
+      }
+      // SF9.5: this is a downstream, automatic fact of a successful R61 driver-fault reversal. No Stripe call occurs in this transaction.
+      const refundSource = await client.query<{ category: ReversalCategory; order_id: string | null; reversed: string; delivery: string; fee: string; previously: string; debit_attempt_id: string; stripe_charge_id: string; livemode: boolean }>(
+        `select r.category, r.order_id, r.reversed_cents::text as reversed, o.delivery_cents::text as delivery, o.service_fee_cents::text as fee,
+                (select coalesce(sum(previous.reversed_cents), 0) from driver_transfer_reversals previous where previous.order_id = r.order_id and previous.category = 'driver_fault' and previous.status = 'succeeded' and previous.id <> r.id)::text as previously,
+                t.debit_attempt_id, t.stripe_charge_id, t.livemode
+           from driver_transfer_reversals r join driver_transfers t on t.id = r.driver_transfer_id join orders o on o.id = r.order_id where r.id = $1::uuid`,
+        [input.reversalId]
+      )
+      const source = refundSource.rows[0]
+      if (source !== undefined && isServiceRefundEligible({ category: source.category, orderId: source.order_id, reversedCents: Number(source.reversed) })) {
+        const reversedCents = clampAttributedReversalCents({ reversedCents: Number(source.reversed), deliveryCents: Number(source.delivery), previouslyRecoveredCents: Number(source.previously) })
+        if (reversedCents > 0) {
+          const refundCents = computeCumulativeServiceRefundCents({ deliveryCents: Number(source.delivery), serviceFeeCents: Number(source.fee), previouslyRecoveredCents: Number(source.previously), reversedCents })
+          await client.query(
+            `insert into driver_reversal_service_refunds(driver_transfer_reversal_id, order_id, debit_attempt_id, stripe_charge_id, delivery_cents, service_fee_cents, previously_recovered_cents, reversed_cents, refund_cents, idempotency_key, livemode)
+             values($1::uuid, $2::uuid, $3::uuid, $4, $5::bigint, $6::bigint, $7::bigint, $8::bigint, $9::bigint, $10, $11) on conflict (driver_transfer_reversal_id) do nothing`,
+            [input.reversalId, source.order_id, source.debit_attempt_id, source.stripe_charge_id, source.delivery, source.fee, source.previously, reversedCents, refundCents, `service-refund:${input.reversalId}`, source.livemode]
+          )
+        }
       }
       return 'completed' as const
     })

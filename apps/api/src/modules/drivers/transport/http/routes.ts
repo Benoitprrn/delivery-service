@@ -1,12 +1,27 @@
 import type { FastifyInstance } from 'fastify'
 import { ZodError } from 'zod'
-import type { createDriversModule } from '../../public.js'
-import { driverAvailabilityBodySchema, driverLocationBodySchema, driverPushTokenBodySchema } from './schemas.js'
+import type { DisconnectDriverUseCase } from '../../application/disconnect-driver.js'
+import type { GetDriverLiveProfileUseCase } from '../../application/get-driver-live-profile.js'
+import type { HeartbeatDriverAvailabilityUseCase } from '../../application/heartbeat-driver-availability.js'
+import type { RecordDriverLocationUseCase } from '../../application/record-driver-location.js'
+import type { RegisterDriverPushTokenUseCase } from '../../application/register-driver-push-token.js'
+import type { SetDriverAvailabilityUseCase } from '../../application/set-driver-availability.js'
+import { driverAvailabilityBodySchema, driverLocationBodySchema, driverPushTokenBodySchema, updateDriverLegalInformationBodySchema, updateDriverProfileBodySchema } from './schemas.js'
+import type { DriverLegalInformation } from '../../application/legal-information.js'
 
 type DriversHttpRoutesOptions = {
-  drivers: Omit<ReturnType<typeof createDriversModule>,
-    'incrementCapacity' | 'decrementCapacity' | 'getCapacity' | 'findAvailableWithinRadius' | 'findLatestDriverLocation'
-  >
+  drivers: {
+    getLiveDriverProfile: GetDriverLiveProfileUseCase['execute']
+    setAvailability: SetDriverAvailabilityUseCase['execute']
+    isAvailable(driverId: string): Promise<boolean>
+    disconnect: DisconnectDriverUseCase['execute']
+    registerPushToken: RegisterDriverPushTokenUseCase['execute']
+    heartbeat: HeartbeatDriverAvailabilityUseCase['execute']
+    recordLocation: RecordDriverLocationUseCase['execute']
+    updateProfile?(driverId: string, profile: { firstName: string; lastName: string; phone: string }): Promise<unknown>
+    getLegalInformation?(driverId: string): Promise<DriverLegalInformation | null>
+    updateLegalInformation?(driverId: string, command: Omit<DriverLegalInformation, 'driverId' | 'siren'>): Promise<DriverLegalInformation>
+  }
 }
 
 export async function registerDriverHttpRoutes(
@@ -32,7 +47,7 @@ export async function registerDriverHttpRoutes(
         })
       }
 
-      return reply.code(200).send(driver)
+      return reply.code(200).send({ ...driver, email: request.authUser.email })
     } catch (error) {
       request.log.error({ err: error }, 'Driver profile lookup failed')
       return reply.code(500).send({
@@ -40,6 +55,36 @@ export async function registerDriverHttpRoutes(
         message: 'An unexpected error occurred',
         correlationId: request.correlationId
       })
+    }
+  })
+
+  app.patch('/api/v1/drivers/me', async (request, reply) => {
+    try {
+      if (request.authUser?.role !== 'driver') return reply.code(403).send({ error: 'ForbiddenError', correlationId: request.correlationId })
+      const body = updateDriverProfileBodySchema.parse(request.body)
+      const driver = await options.drivers.updateProfile!(request.authUser.id, body)
+      if (driver === null) return reply.code(404).send({ error: 'DriverNotFoundError', correlationId: request.correlationId })
+      return reply.send({ ...driver, email: request.authUser.email })
+    } catch (error) {
+      if (error instanceof ZodError) return reply.code(400).send({ error: 'ValidationError', correlationId: request.correlationId })
+      request.log.error({ err: error }, 'Driver profile update failed')
+      return reply.code(500).send({ error: 'InternalServerError', correlationId: request.correlationId })
+    }
+  })
+
+  app.get('/api/v1/drivers/me/legal-information', async (request, reply) => {
+    if (request.authUser?.role !== 'driver') return reply.code(403).send({ error: 'ForbiddenError', correlationId: request.correlationId })
+    return reply.send({ legalInformation: await options.drivers.getLegalInformation!(request.authUser.id) })
+  })
+  app.patch('/api/v1/drivers/me/legal-information', async (request, reply) => {
+    try {
+      if (request.authUser?.role !== 'driver') return reply.code(403).send({ error: 'ForbiddenError', correlationId: request.correlationId })
+      const body = updateDriverLegalInformationBodySchema.parse(request.body)
+      return reply.send({ legalInformation: await options.drivers.updateLegalInformation!(request.authUser.id, { ...body, billingAddress: body.billingAddress ?? null, vatNumber: body.vatNumber ?? null, vatRegime: body.vatRegime ?? null, legalForm: body.legalForm ?? null }) })
+    } catch (error) {
+      if (error instanceof ZodError) return reply.code(400).send({ error: 'ValidationError', correlationId: request.correlationId })
+      request.log.error({ err: error }, 'Driver legal information update failed')
+      return reply.code(500).send({ error: 'InternalServerError', correlationId: request.correlationId })
     }
   })
 

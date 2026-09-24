@@ -1,7 +1,12 @@
 import { Clock, Euro, MapPin, Route, Store, CreditCard } from 'lucide-react-native';
 import type { ReactNode } from 'react';
 import { Pressable, Text, View } from 'react-native';
-import { formatDistanceKm, formatDurationMin, formatPickupLabel, formatPriceEuros } from '../lib/format';
+import {
+  formatDistanceKm,
+  formatDurationMin,
+  formatPickupLabel,
+  formatPriceEuros,
+} from '../lib/format';
 import { BLUE_500, EMERALD_600, STONE_500 } from '../lib/colors';
 import type { DriverOrder, Order } from '../lib/orders-types';
 
@@ -26,7 +31,7 @@ export function OrderCard({
   statusBadge,
   footer,
   onPress,
-  truncateAddresses = false
+  truncateAddresses = false,
 }: OrderCardProps) {
   const content = (
     <View className="gap-3 p-3">
@@ -34,7 +39,7 @@ export function OrderCard({
         <View className="flex-row items-start justify-between gap-2">
           <View className="flex-1">{statusBadge}</View>
           {showOrderNumber && (
-            <Text className="font-sans text-body-lg text-stone-400">#{order.id.slice(-6)}</Text>
+            <Text className="font-sans text-body-lg text-stone-400">#{order.publicReference}</Text>
           )}
         </View>
       )}
@@ -42,13 +47,17 @@ export function OrderCard({
       <View className="flex-row items-center justify-between gap-2">
         {merchantName !== undefined ? (
           <View className="flex-1 flex-row items-center gap-2">
-              <Store size={18} color={EMERALD_600} />
-              <Text className="flex-1 font-sans-semibold text-sm text-stone-800">{merchantName}</Text>
+            <Store size={18} color={EMERALD_600} />
+            <Text className="flex-1 font-sans-semibold text-sm text-stone-800">{merchantName}</Text>
           </View>
-        ) : <View className="flex-1" />}
+        ) : (
+          <View className="flex-1" />
+        )}
         <View className="flex-row items-center gap-1.5">
           <Clock size={16} color={BLUE_500} />
-          <Text className="font-sans-semibold text-sm text-stone-700">{formatPickupLabel(order.pickupScheduledAt, order.createdAt)}</Text>
+          <Text className="font-sans-semibold text-sm text-stone-700">
+            {formatPickupLabel(order.pickupScheduledAt, order.createdAt)}
+          </Text>
         </View>
       </View>
 
@@ -88,24 +97,31 @@ export function OrderCard({
       <View className="flex-row flex-wrap items-center gap-4 border-t border-border pt-3">
         <View className="flex-row items-center gap-1.5">
           <Route size={16} color={STONE_500} />
-          <Text className="font-sans text-sm text-stone-500">{formatDistanceKm(order.distanceM)}</Text>
+          <Text className="font-sans text-sm text-stone-500">
+            {formatDistanceKm(order.distanceM)}
+          </Text>
         </View>
         <View className="flex-row items-center gap-1.5">
           <Clock size={16} color={STONE_500} />
-          <Text className="font-sans text-sm text-stone-500">{formatDurationMin(order.durationS)}</Text>
+          <Text className="font-sans text-sm text-stone-500">
+            {formatDurationMin(order.durationS)}
+          </Text>
         </View>
         <View className="flex-row items-center gap-1.5">
           <Euro size={16} color={EMERALD_600} />
-          <Text className="font-sans-semibold text-sm text-primary-700">{formatPriceEuros(order.priceCents)}</Text>
+          <Text className="font-sans-semibold text-sm text-primary-700">
+            {formatPriceEuros(order.deliveryCents ?? order.priceCents)}
+          </Text>
         </View>
       </View>
-
     </View>
   );
 
   return (
     <View className="rounded-2xl border border-border bg-surface shadow-sm">
-      {onPress === undefined ? content : (
+      {onPress === undefined ? (
+        content
+      ) : (
         <Pressable onPress={onPress} className="active:opacity-80">
           {content}
         </Pressable>

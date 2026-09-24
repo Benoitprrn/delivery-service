@@ -3,6 +3,7 @@ import {
   CashOnDeliveryAlreadyCollectedError,
   CardPaymentsNotReadyError,
   DriverPayoutAccountNotReadyError,
+  DriverInvoiceInformationNotReadyError,
   MerchantPaymentSetupIncompleteError,
   CashOnDeliveryPaymentRequiredError,
   DeliveryOutsideZoneError,
@@ -59,7 +60,7 @@ export function mapErrorToHttp(error: unknown, correlationId: string): HttpError
   if (error instanceof CashOnDeliveryPaymentRequiredError || error instanceof CashOnDeliveryAlreadyCollectedError || error instanceof CardPaymentsNotReadyError || error instanceof MerchantPaymentSetupIncompleteError) {
     return mappedError(409, error, correlationId)
   }
-  if (error instanceof DriverPayoutAccountNotReadyError) return mappedError(403, error, correlationId)
+  if (error instanceof DriverPayoutAccountNotReadyError || error instanceof DriverInvoiceInformationNotReadyError) return mappedError(403, error, correlationId)
   if (error instanceof DeliveryCodeInvalidError) {
     return {
       statusCode: 422,

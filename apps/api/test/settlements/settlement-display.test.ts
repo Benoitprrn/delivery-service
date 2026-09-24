@@ -3,7 +3,7 @@ import { driverStatementDisplayState, expectedPaymentAt, incidentOpenCents, merc
 import type { DriverStatementRow, MerchantSettlementRow } from '../../src/modules/settlements/ports/settlement-read.js'
 
 const statement = (overrides: Partial<DriverStatementRow> = {}): DriverStatementRow => ({ statementId: 'statement', merchantId: 'merchant', dueCents: 100, paidCents: 0, status: 'unpaid', holdReason: null, settlementStatus: 'notified', debit: null, incidentOpen: false, ...overrides })
-const merchant = (overrides: Partial<MerchantSettlementRow> = {}): MerchantSettlementRow => ({ merchantSettlementId: 'settlement', periodStart: new Date('2026-09-14T22:00:00.000Z'), periodEnd: new Date('2026-09-21T22:00:00.000Z'), amountCents: 100, deliveriesCount: 1, status: 'created', preNotification: null, attempts: [], incidents: [], openReceivablesCents: 0, retryRequested: false, ...overrides })
+const merchant = (overrides: Partial<MerchantSettlementRow> = {}): MerchantSettlementRow => ({ merchantSettlementId: 'settlement', periodStart: new Date('2026-09-14T22:00:00.000Z'), periodEnd: new Date('2026-09-21T22:00:00.000Z'), amountCents: 100, deliveryCents: 80, serviceFeeCents: 20, deliveriesCount: 1, status: 'created', preNotification: null, attempts: [], incidents: [], openReceivablesCents: 0, retryRequested: false, ...overrides })
 
 describe('settlement display domain', () => {
   it.each([

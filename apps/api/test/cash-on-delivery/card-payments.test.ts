@@ -35,6 +35,7 @@ const legal: MerchantLegalInformation = {
   legalAddress: { line1: '1 rue Test', line2: null, postalCode: '01000', city: 'Bourg-en-Bresse', countryCode: 'FR', communeCode: null },
   billingAddress: null,
   vatNumber: null,
+  buyerReference: null,
   sireneVerificationStatus: 'verified',
   sireneVerifiedAt: null
 }

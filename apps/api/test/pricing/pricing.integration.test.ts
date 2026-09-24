@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import { afterEach, describe, expect, it } from 'vitest'
-import { computePriceCents } from '../../src/modules/pricing/public.js'
+import { computePriceCents, createPricingSettingsReader } from '../../src/modules/pricing/public.js'
+import { PostgresOrderRepository } from '../../src/modules/orders/infrastructure/postgres-order-repository.js'
 import { pool } from '../../src/platform/db.js'
+import { deleteTestOrders } from '../support/cleanup-orders.js'
 
 const merchantId = '22222222-2222-2222-2222-222222222222'
 const zoneId = '11111111-1111-1111-1111-111111111111'
@@ -12,7 +14,7 @@ afterEach(async () => {
     return
   }
 
-  await pool.query('delete from orders where id = any($1::uuid[])', [createdOrderIds.splice(0)])
+  await deleteTestOrders(pool, createdOrderIds.splice(0))
 })
 
 describe('Postgres generated order price', () => {
@@ -60,8 +62,56 @@ describe('Postgres generated order price', () => {
       )
 
       expect(result.rows[0]?.price_cents).toBe(expectedPriceCents)
-      expect(computePriceCents(distanceM, durationS)).toBe(expectedPriceCents)
-      expect(result.rows[0]?.price_cents).toBe(computePriceCents(distanceM, durationS))
+      const activeSettings = await createPricingSettingsReader(pool).findActive()
+      expect(computePriceCents(distanceM, durationS, activeSettings)).toBe(expectedPriceCents)
+      expect(result.rows[0]?.price_cents).toBe(computePriceCents(distanceM, durationS, activeSettings))
     }
   )
+
+  it.each([
+    { distanceM: 10_000, durationS: 355, overrideBps: null, expectedDeliveryCents: 600, expectedServiceFeeCents: 120, expectedMerchantTotalCents: 720 },
+    { distanceM: 5_000, durationS: 150, overrideBps: null, expectedDeliveryCents: 400, expectedServiceFeeCents: 80, expectedMerchantTotalCents: 480 },
+    { distanceM: 10_000, durationS: 355, overrideBps: 2_500, expectedDeliveryCents: 600, expectedServiceFeeCents: 150, expectedMerchantTotalCents: 750 }
+  ])('freezes delivery and additive service fees for $distanceM m / $durationS s', async ({ distanceM, durationS, overrideBps, expectedDeliveryCents, expectedServiceFeeCents, expectedMerchantTotalCents }) => {
+    const repository = new PostgresOrderRepository(pool, createPricingSettingsReader(pool))
+    const order = await repository.create({
+      merchantId,
+      zoneId,
+      customerName: 'Test Client',
+      customerPhone: '0600000000',
+      customerEmail: null,
+      pickupScheduledAt: null,
+      orderDetails: null,
+      deliveryInstructions: null,
+      deliveryAddressComplement: null,
+      pickupAddress: 'Place de la Grenette, 01000 Bourg-en-Bresse',
+      pickupLat: 46.2058,
+      pickupLng: 5.2255,
+      deliveryAddress: '10 Avenue Alsace-Lorraine, 01000 Bourg-en-Bresse',
+      deliveryLat: 46.21,
+      deliveryLng: 5.23,
+      distanceM,
+      durationS,
+      merchantServiceFeeRateBpsOverride: overrideBps,
+      cashOnDeliveryAmountCents: null,
+      actor: { type: 'merchant', id: merchantId },
+      correlationId: randomUUID()
+    })
+    createdOrderIds.push(order.id)
+
+    const result = await pool.query<{
+      price_cents: number
+      driver_earning_cents: number
+      delivery_cents: number | null
+      service_fee_cents: number | null
+    }>('select price_cents, driver_earning_cents, delivery_cents, service_fee_cents from orders where id = $1', [order.id])
+
+    expect(result.rows[0]).toEqual({
+      price_cents: expectedDeliveryCents,
+      driver_earning_cents: expectedDeliveryCents,
+      delivery_cents: expectedDeliveryCents,
+      service_fee_cents: expectedServiceFeeCents
+    })
+    expect(expectedDeliveryCents + expectedServiceFeeCents).toBe(expectedMerchantTotalCents)
+  })
 })

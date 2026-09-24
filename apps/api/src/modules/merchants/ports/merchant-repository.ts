@@ -1,6 +1,7 @@
 import type { Merchant } from '../domain/merchant.js'
 import type { PostalAddress } from './sirene-provider.js'
 import type { PoolClient } from 'pg'
+import type { MerchantAccountContact } from '../application/account-contact.js'
 
 export type MerchantInformationPatch = {
   name: string
@@ -20,6 +21,7 @@ export interface MerchantRepository {
 }
 
 export type SireneVerificationStatus = 'verified' | 'unavailable' | 'restricted' | 'unverified'
-export type MerchantLegalInformation = { merchantId: string; siret: string; siren: string; legalName: string; legalAddress: PostalAddress; billingAddress: PostalAddress | null; vatNumber: string | null; sireneVerificationStatus: SireneVerificationStatus; sireneVerifiedAt: Date | null }
+export type MerchantLegalInformation = { merchantId: string; siret: string; siren: string; legalName: string; legalAddress: PostalAddress; billingAddress: PostalAddress | null; vatNumber: string | null; vatRegime?: 'assujetti' | 'franchise_en_base' | 'exonere' | null; legalForm?: string | null; buyerReference: string | null; sireneVerificationStatus: SireneVerificationStatus; sireneVerifiedAt: Date | null }
 export type MerchantLegalInformationPatch = Omit<MerchantLegalInformation, 'sireneVerifiedAt'>
 export interface MerchantLegalInformationRepository { findLegalInformation(merchantId: string): Promise<MerchantLegalInformation | null>; upsertLegalInformation(patch: MerchantLegalInformationPatch): Promise<MerchantLegalInformation> }
+export interface MerchantAccountContactRepository { findAccountContact(merchantId: string): Promise<MerchantAccountContact | null>; upsertAccountContact(merchantId: string, contact: MerchantAccountContact): Promise<MerchantAccountContact> }

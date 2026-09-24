@@ -9,7 +9,8 @@
     "android": "expo run:android",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test": "vitest run"
   },
   "dependencies": {
     "@expo-google-fonts/dm-sans": "^0.4.2",
@@ -22,6 +23,7 @@
     "expo-build-properties": "~57.0.21",
     "expo-constants": "~57.0.18",
     "expo-dev-client": "~57.0.19",
+    "expo-document-picker": "~57.0.2",
     "expo-font": "~57.0.4",
     "expo-image-manipulator": "~57.0.19",
     "expo-image-picker": "~57.0.19",
@@ -54,6 +56,7 @@
     "@types/react": "~19.2.2",
     "cloudflared": "^0.7.3",
     "tailwindcss": "^3.4.19",
-    "typescript": "~6.0.3"
+    "typescript": "~6.0.3",
+    "vitest": "^5.0.0"
   }
 }

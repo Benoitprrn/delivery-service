@@ -24,6 +24,7 @@ export type CreateOrderInput = {
   deliveryLng: number
   distanceM: number
   durationS: number
+  merchantServiceFeeRateBpsOverride?: number | null
   cashOnDeliveryAmountCents: number | null
   actor: Actor
   correlationId: string

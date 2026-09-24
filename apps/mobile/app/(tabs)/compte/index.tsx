@@ -1,15 +1,14 @@
 import { useFocusEffect, useRouter } from 'expo-router';
-import { ChevronRight, CircleHelp, CreditCard, LogOut, ShieldAlert } from 'lucide-react-native';
-import { useCallback, useMemo, useState } from 'react';
+import { ChevronRight, CircleHelp, CreditCard, FileText, LogOut, ShieldAlert } from 'lucide-react-native';
+import { useCallback, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { api } from '../../../lib/api';
 import { EMERALD_600 } from '../../../lib/colors';
-import { getWeeklyEarnings } from '../../../lib/earnings';
 import { formatPriceEuros } from '../../../lib/format';
 import { useAuth } from '../../../lib/auth-context';
 import { showToast } from '../../../lib/toast';
-import type { DriverEarnings } from '../../../lib/wallet-types';
+import type { DriverSettlementsResponse } from '../../../lib/settlements-types';
 
 function driverName(user: ReturnType<typeof useAuth>['user']): string {
   const metadata = user?.user_metadata ?? {};
@@ -35,26 +34,22 @@ function Chevron() {
 export default function AccountScreen() {
   const router = useRouter();
   const { user, signOut } = useAuth();
-  const [earnings, setEarnings] = useState<DriverEarnings | null>(null);
+  const [settlements, setSettlements] = useState<DriverSettlementsResponse | null>(null);
   const [isSigningOut, setIsSigningOut] = useState(false);
 
-  const loadEarnings = useCallback(async () => {
+  const loadSettlements = useCallback(async () => {
     try {
-      setEarnings(await api.getMyEarnings());
+      setSettlements(await api.getMySettlements());
     } catch {
       // La carte reste lisible avec un tiret si le réseau est temporairement indisponible.
     }
   }, []);
 
   useFocusEffect(useCallback(() => {
-    void loadEarnings();
-  }, [loadEarnings]));
+    void loadSettlements();
+  }, [loadSettlements]));
 
   const name = driverName(user);
-  const thisWeek = useMemo(
-    () => getWeeklyEarnings(earnings?.recentCompletedOrders ?? [])[0] ?? { totalCents: 0, completedOrderCount: 0 },
-    [earnings]
-  );
 
   async function handleSignOut() {
     setIsSigningOut(true);
@@ -91,17 +86,29 @@ export default function AccountScreen() {
               </View>
               <View className="flex-1 gap-1">
                 <Text className="font-sans-bold text-h3 text-stone-800">Wallet</Text>
-                {earnings === null ? (
+                {settlements === null ? (
                   <ActivityIndicator color={EMERALD_600} />
+                ) : settlements.currentWeek === null ? (
+                  <Text className="font-sans-bold text-h2 text-primary-700">—</Text>
                 ) : (
                   <>
-                    <Text className="font-sans-bold text-h2 text-primary-700">{formatPriceEuros(thisWeek.totalCents)}</Text>
+                    <Text className="font-sans-bold text-h2 text-primary-700">{formatPriceEuros(settlements.currentWeek.estimatedAmountCents)}</Text>
                     <Text className="font-sans text-body text-stone-500">
-                      {thisWeek.completedOrderCount} course{thisWeek.completedOrderCount > 1 ? 's' : ''} cette semaine
+                      {settlements.currentWeek.deliveries} course{settlements.currentWeek.deliveries > 1 ? 's' : ''} cette semaine
                     </Text>
                   </>
                 )}
               </View>
+              <Chevron />
+            </View>
+          </Pressable>
+
+          <Pressable onPress={() => router.push('/mandat')} className="rounded-2xl border border-border bg-surface p-4 shadow-sm active:opacity-75">
+            <View className="flex-row items-center gap-3">
+              <View className="h-12 w-12 items-center justify-center rounded-full bg-primary-100">
+                <FileText size={23} color={EMERALD_600} />
+              </View>
+              <Text className="flex-1 font-sans-bold text-h3 text-stone-800">Mandat de facturation</Text>
               <Chevron />
             </View>
           </Pressable>

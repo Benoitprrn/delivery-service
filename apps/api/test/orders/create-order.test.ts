@@ -81,7 +81,8 @@ describe('CreateOrderUseCase', () => {
       pickupScheduledAt: new Date('2026-09-13T10:45:00.000Z'),
       orderDetails: null,
       deliveryInstructions: null,
-      deliveryAddressComplement: null
+      deliveryAddressComplement: null,
+      merchantServiceFeeRateBpsOverride: null
     })
   })
 

@@ -37,6 +37,18 @@ type PostalAddress = {
   communeCode: string | null
 }
 
+type VatRegime = 'assujetti' | 'franchise_en_base' | 'exonere'
+
+const VAT_REGIME_OPTIONS: { value: VatRegime; label: string }[] = [
+  { value: 'assujetti', label: 'Assujetti à la TVA' },
+  { value: 'franchise_en_base', label: 'Franchise en base' },
+  { value: 'exonere', label: 'Exonéré' }
+]
+
+function isVatRegime(value: unknown): value is VatRegime | null {
+  return value === null || value === 'assujetti' || value === 'franchise_en_base' || value === 'exonere'
+}
+
 type MerchantLegalInformation = {
   siret: string
   siren: string
@@ -44,6 +56,9 @@ type MerchantLegalInformation = {
   legalAddress: PostalAddress
   billingAddress: PostalAddress | null
   vatNumber: string | null
+  vatRegime: VatRegime | null
+  legalForm: string | null
+  buyerReference: string | null
   sireneVerificationStatus: string
   sireneVerifiedAt: string | null
 }
@@ -55,8 +70,63 @@ type LegalInformationDraft = {
   billingAddress: PostalAddress
   billingAddressDifferent: boolean
   vatNumber: string
+  vatRegime: VatRegime | ''
+  legalForm: string
+  buyerReference: string
   sireneVerificationStatus: string
   sireneWarning: string | null
+}
+
+// Statut technique de transmission (annuaire Super PDP), jamais une donnée légale : dérivé
+// serveur, affiché sans jargon (voir docs/work/invoicing-preparation-plan.md §13/Tranche 3).
+type ElectronicInvoicingStatus = 'available' | 'unavailable' | 'unknown'
+
+function isElectronicInvoicingStatus(value: unknown): value is ElectronicInvoicingStatus {
+  return value === 'available' || value === 'unavailable' || value === 'unknown'
+}
+
+function electronicInvoicingStatusInfo(status: ElectronicInvoicingStatus): { label: string; className: string } | null {
+  switch (status) {
+    case 'available':
+      return { label: 'Facturation électronique disponible', className: 'bg-primary-100 text-primary-800' }
+    case 'unavailable':
+      return { label: "Votre entreprise n'est pas encore adressable pour la facturation électronique.", className: 'bg-stone-100 text-stone-600' }
+    default:
+      return null
+  }
+}
+
+type AccountContact = { firstName: string; lastName: string; phone: string }
+
+function parseAccountContact(value: unknown): AccountContact | null {
+  if (!isRecord(value) || typeof value.firstName !== 'string' || typeof value.lastName !== 'string' || typeof value.phone !== 'string') return null
+  return { firstName: value.firstName, lastName: value.lastName, phone: value.phone }
+}
+
+type AccountDocumentType = 'identity_document' | 'business_registration_document'
+
+type AccountDocument = { documentType: AccountDocumentType; originalFilename: string | null; uploadedAt: string }
+
+function parseAccountDocuments(value: unknown): AccountDocument[] | null {
+  if (!isRecord(value) || !Array.isArray(value.documents)) return null
+  const documents: AccountDocument[] = []
+  for (const item of value.documents) {
+    if (
+      !isRecord(item) ||
+      (item.documentType !== 'identity_document' && item.documentType !== 'business_registration_document') ||
+      !isNullableString(item.originalFilename) ||
+      typeof item.uploadedAt !== 'string'
+    ) {
+      return null
+    }
+    documents.push({ documentType: item.documentType, originalFilename: item.originalFilename, uploadedAt: item.uploadedAt })
+  }
+  return documents
+}
+
+const DOCUMENT_LABELS: Record<AccountDocumentType, { title: string; hint: string }> = {
+  identity_document: { title: "Pièce d'identité du responsable", hint: 'PDF, JPEG ou PNG, 10 Mo maximum' },
+  business_registration_document: { title: 'Justificatif d’entreprise', hint: 'Kbis, extrait RCS/K, attestation SIRENE… — PDF, JPEG ou PNG, 10 Mo maximum' }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -125,6 +195,9 @@ function parseMerchantLegalInformation(value: unknown): MerchantLegalInformation
     legalAddress === null ||
     billingAddress === undefined ||
     !isNullableString(value.vatNumber) ||
+    !isVatRegime(value.vatRegime) ||
+    !isNullableString(value.legalForm) ||
+    !isNullableString(value.buyerReference) ||
     typeof value.sireneVerificationStatus !== 'string' ||
     !isNullableString(value.sireneVerifiedAt)
   ) {
@@ -138,19 +211,22 @@ function parseMerchantLegalInformation(value: unknown): MerchantLegalInformation
     legalAddress,
     billingAddress,
     vatNumber: value.vatNumber,
+    vatRegime: value.vatRegime,
+    legalForm: value.legalForm,
+    buyerReference: value.buyerReference,
     sireneVerificationStatus: value.sireneVerificationStatus,
     sireneVerifiedAt: value.sireneVerifiedAt
   }
 }
 
-type LegalInformationResponse = { legalInformation: MerchantLegalInformation | null; merchantLegalInformationCompleted: boolean }
+type LegalInformationResponse = { legalInformation: MerchantLegalInformation | null; merchantLegalInformationCompleted: boolean; electronicInvoicingStatus: ElectronicInvoicingStatus }
 
 function parseLegalInformationResponse(body: unknown): LegalInformationResponse | null {
-  if (!isRecord(body) || typeof body.merchantLegalInformationCompleted !== 'boolean') return null
-  if (body.legalInformation === null) return { legalInformation: null, merchantLegalInformationCompleted: false }
+  if (!isRecord(body) || typeof body.merchantLegalInformationCompleted !== 'boolean' || !isElectronicInvoicingStatus(body.electronicInvoicingStatus)) return null
+  if (body.legalInformation === null) return { legalInformation: null, merchantLegalInformationCompleted: false, electronicInvoicingStatus: body.electronicInvoicingStatus }
   const legalInformation = parseMerchantLegalInformation(body.legalInformation)
   if (legalInformation === null) return null
-  return { legalInformation, merchantLegalInformationCompleted: body.merchantLegalInformationCompleted }
+  return { legalInformation, merchantLegalInformationCompleted: body.merchantLegalInformationCompleted, electronicInvoicingStatus: body.electronicInvoicingStatus }
 }
 
 function toLegalInformationDraft(value: MerchantLegalInformation): LegalInformationDraft {
@@ -161,6 +237,9 @@ function toLegalInformationDraft(value: MerchantLegalInformation): LegalInformat
     billingAddress: value.billingAddress === null ? emptyPostalAddress() : clonePostalAddress(value.billingAddress),
     billingAddressDifferent: value.billingAddress !== null,
     vatNumber: value.vatNumber ?? '',
+    vatRegime: value.vatRegime ?? '',
+    legalForm: value.legalForm ?? '',
+    buyerReference: value.buyerReference ?? '',
     sireneVerificationStatus: value.sireneVerificationStatus,
     sireneWarning: null
   }
@@ -309,6 +388,7 @@ export default function AccountPage() {
 
   const [legalLoadStatus, setLegalLoadStatus] = useState<'loading' | 'success' | 'error'>('loading')
   const [legalOriginal, setLegalOriginal] = useState<MerchantLegalInformation | undefined>(undefined)
+  const [electronicInvoicingStatus, setElectronicInvoicingStatus] = useState<ElectronicInvoicingStatus>('unknown')
   const [legalDraft, setLegalDraft] = useState<LegalInformationDraft>({
     siret: '',
     legalName: '',
@@ -316,6 +396,9 @@ export default function AccountPage() {
     billingAddress: emptyPostalAddress(),
     billingAddressDifferent: false,
     vatNumber: '',
+    vatRegime: '',
+    legalForm: '',
+    buyerReference: '',
     sireneVerificationStatus: 'unverified',
     sireneWarning: null
   })
@@ -323,6 +406,19 @@ export default function AccountPage() {
   const [isSavingLegalInformation, setIsSavingLegalInformation] = useState(false)
   const [legalTouched, setLegalTouched] = useState(false)
   const [legalSaveAttempted, setLegalSaveAttempted] = useState(false)
+
+  const [contactLoadStatus, setContactLoadStatus] = useState<'loading' | 'success' | 'error'>('loading')
+  const [contactFirstName, setContactFirstName] = useState('')
+  const [contactLastName, setContactLastName] = useState('')
+  const [contactPhone, setContactPhone] = useState('')
+  const [contactOriginal, setContactOriginal] = useState<AccountContact | undefined>(undefined)
+  const [isSavingContact, setIsSavingContact] = useState(false)
+
+  const [documentsLoadStatus, setDocumentsLoadStatus] = useState<'loading' | 'success' | 'error'>('loading')
+  const [documents, setDocuments] = useState<AccountDocument[]>([])
+  const [documentBusy, setDocumentBusy] = useState<AccountDocumentType | null>(null)
+  const identityFileInputRef = useRef<HTMLInputElement>(null)
+  const businessDocFileInputRef = useRef<HTMLInputElement>(null)
 
   const [newPassword, setNewPassword] = useState('')
   const [isChangingPassword, setIsChangingPassword] = useState(false)
@@ -370,12 +466,46 @@ export default function AccountPage() {
       throw new Error('Impossible de charger les informations légales.')
     }
 
+    setElectronicInvoicingStatus(parsed.electronicInvoicingStatus)
     if (parsed.legalInformation === null) {
       setLegalOriginal(undefined)
       return
     }
     setLegalOriginal(parsed.legalInformation)
     setLegalDraft(toLegalInformationDraft(parsed.legalInformation))
+  }, [])
+
+  const loadAccountContact = useCallback(async (): Promise<void> => {
+    const token = await getAccessToken()
+    const response = await fetch(`${apiUrl}/api/v1/merchants/me/account-contact`, {
+      headers: { authorization: `Bearer ${token}` }
+    })
+    if (response.status === 404) {
+      setContactOriginal(undefined)
+      return
+    }
+    const body: unknown = await response.json()
+    const parsed = parseAccountContact(body)
+    if (!response.ok || parsed === null) {
+      throw new Error('Impossible de charger le responsable du compte.')
+    }
+    setContactOriginal(parsed)
+    setContactFirstName(parsed.firstName)
+    setContactLastName(parsed.lastName)
+    setContactPhone(parsed.phone)
+  }, [])
+
+  const loadDocuments = useCallback(async (): Promise<void> => {
+    const token = await getAccessToken()
+    const response = await fetch(`${apiUrl}/api/v1/merchants/me/documents`, {
+      headers: { authorization: `Bearer ${token}` }
+    })
+    const body: unknown = await response.json()
+    const parsed = parseAccountDocuments(body)
+    if (!response.ok || parsed === null) {
+      throw new Error('Impossible de charger les documents.')
+    }
+    setDocuments(parsed)
   }, [])
 
   useEffect(() => {
@@ -406,6 +536,34 @@ export default function AccountPage() {
             variant: 'error',
             title: 'Erreur',
             message: error instanceof Error ? error.message : 'Impossible de charger les informations légales.'
+          })
+        }
+      }
+
+      try {
+        await loadAccountContact()
+        if (!cancelled) setContactLoadStatus('success')
+      } catch (error) {
+        if (!cancelled) {
+          setContactLoadStatus('error')
+          showToast({
+            variant: 'error',
+            title: 'Erreur',
+            message: error instanceof Error ? error.message : 'Impossible de charger le responsable du compte.'
+          })
+        }
+      }
+
+      try {
+        await loadDocuments()
+        if (!cancelled) setDocumentsLoadStatus('success')
+      } catch (error) {
+        if (!cancelled) {
+          setDocumentsLoadStatus('error')
+          showToast({
+            variant: 'error',
+            title: 'Erreur',
+            message: error instanceof Error ? error.message : 'Impossible de charger les documents.'
           })
         }
       }
@@ -582,14 +740,20 @@ export default function AccountPage() {
           legalName: legalDraft.legalName.trim(),
           legalAddress: legalDraft.legalAddress,
           billingAddress: legalDraft.billingAddressDifferent ? legalDraft.billingAddress : null,
-          vatNumber: legalDraft.vatNumber.trim() || null
+          vatNumber: legalDraft.vatNumber.trim() || null,
+          vatRegime: legalDraft.vatRegime || null,
+          legalForm: legalDraft.legalForm.trim() || null,
+          buyerReference: legalDraft.buyerReference.trim() || null
         }) !==
         JSON.stringify({
           siret: legalOriginal.siret,
           legalName: legalOriginal.legalName,
           legalAddress: legalOriginal.legalAddress,
           billingAddress: legalOriginal.billingAddress,
-          vatNumber: legalOriginal.vatNumber
+          vatNumber: legalOriginal.vatNumber,
+          vatRegime: legalOriginal.vatRegime,
+          legalForm: legalOriginal.legalForm,
+          buyerReference: legalOriginal.buyerReference
         })
   const canLookupSiret = isValidSiret(legalDraft.siret) && !isLookingUpSiret
   const canSaveLegalInformation = legalInformationDirty && !isSavingLegalInformation
@@ -656,7 +820,10 @@ export default function AccountPage() {
           legalName: legalDraft.legalName.trim(),
           legalAddress: legalDraft.legalAddress,
           billingAddress: legalDraft.billingAddressDifferent ? legalDraft.billingAddress : null,
-          vatNumber: legalDraft.vatNumber.trim() || null
+          vatNumber: legalDraft.vatNumber.trim() || null,
+          vatRegime: legalDraft.vatRegime || null,
+          legalForm: legalDraft.legalForm.trim() || null,
+          buyerReference: legalDraft.buyerReference.trim() || null
         })
       })
       const body: unknown = await response.json()
@@ -667,6 +834,7 @@ export default function AccountPage() {
         throw new Error(legalInformationErrorMessage(errorCode, message))
       }
 
+      setElectronicInvoicingStatus(parsed.electronicInvoicingStatus)
       setLegalOriginal(parsed.legalInformation)
       setLegalDraft(toLegalInformationDraft(parsed.legalInformation))
       setLegalTouched(false)
@@ -680,6 +848,116 @@ export default function AccountPage() {
       })
     } finally {
       setIsSavingLegalInformation(false)
+    }
+  }
+
+  const contactPhoneValid = FRENCH_PHONE_REGEX.test(contactPhone.trim())
+  const contactValid = contactFirstName.trim().length > 0 && contactLastName.trim().length > 0 && contactPhoneValid
+  const contactDirty =
+    contactOriginal === undefined ||
+    contactFirstName.trim() !== contactOriginal.firstName ||
+    contactLastName.trim() !== contactOriginal.lastName ||
+    contactPhone.trim() !== contactOriginal.phone
+  const canSaveContact = contactValid && contactDirty && !isSavingContact
+
+  async function handleSaveAccountContact() {
+    if (!canSaveContact) return
+    setIsSavingContact(true)
+
+    try {
+      const token = await getAccessToken()
+      const response = await fetch(`${apiUrl}/api/v1/merchants/me/account-contact`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify({ firstName: contactFirstName.trim(), lastName: contactLastName.trim(), phone: contactPhone.trim() })
+      })
+      const body: unknown = await response.json()
+      const parsed = parseAccountContact(body)
+      if (!response.ok || parsed === null) {
+        throw new Error("L'enregistrement du responsable du compte a échoué.")
+      }
+      setContactOriginal(parsed)
+      setContactFirstName(parsed.firstName)
+      setContactLastName(parsed.lastName)
+      setContactPhone(parsed.phone)
+      showToast({ variant: 'success', title: 'Responsable du compte enregistré ✓' })
+    } catch (error) {
+      showToast({
+        variant: 'error',
+        title: 'Erreur',
+        message: error instanceof Error ? error.message : "L'enregistrement du responsable du compte a échoué."
+      })
+    } finally {
+      setIsSavingContact(false)
+    }
+  }
+
+  const MAX_DOCUMENT_SIZE_BYTES = 10 * 1024 * 1024
+  const ACCEPTED_DOCUMENT_TYPES = ['application/pdf', 'image/jpeg', 'image/png']
+
+  async function handleUploadDocument(documentType: AccountDocumentType, event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (file === undefined) return
+
+    if (!ACCEPTED_DOCUMENT_TYPES.includes(file.type)) {
+      showToast({ variant: 'error', title: 'Format non pris en charge', message: 'Choisissez un fichier PDF, JPEG ou PNG.' })
+      return
+    }
+    if (file.size > MAX_DOCUMENT_SIZE_BYTES) {
+      showToast({ variant: 'error', title: 'Fichier trop volumineux', message: 'Le document ne doit pas dépasser 10 Mo.' })
+      return
+    }
+
+    setDocumentBusy(documentType)
+    try {
+      const token = await getAccessToken()
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('documentType', documentType)
+
+      const response = await fetch(`${apiUrl}/api/v1/merchants/me/documents`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}` },
+        body: formData
+      })
+      if (!response.ok) {
+        const body: unknown = await response.json().catch(() => null)
+        const message = isRecord(body) && typeof body.message === 'string' ? body.message : undefined
+        throw new Error(message ?? "L'envoi du document a échoué.")
+      }
+      await loadDocuments()
+      showToast({ variant: 'success', title: 'Document déposé ✓' })
+    } catch (error) {
+      showToast({
+        variant: 'error',
+        title: 'Erreur',
+        message: error instanceof Error ? error.message : "L'envoi du document a échoué."
+      })
+    } finally {
+      setDocumentBusy(null)
+    }
+  }
+
+  async function handleDeleteDocument(documentType: AccountDocumentType) {
+    setDocumentBusy(documentType)
+    try {
+      const token = await getAccessToken()
+      const response = await fetch(`${apiUrl}/api/v1/merchants/me/documents/${documentType}`, {
+        method: 'DELETE',
+        headers: { authorization: `Bearer ${token}` }
+      })
+      if (!response.ok) throw new Error('La suppression du document a échoué.')
+      await loadDocuments()
+      showToast({ variant: 'success', title: 'Document supprimé ✓' })
+    } catch (error) {
+      showToast({
+        variant: 'error',
+        title: 'Erreur',
+        message: error instanceof Error ? error.message : 'La suppression du document a échoué.'
+      })
+    } finally {
+      setDocumentBusy(null)
     }
   }
 
@@ -836,6 +1114,38 @@ export default function AccountPage() {
         </section>
 
         <section className="rounded-2xl border border-border bg-surface p-5 shadow-md md:p-6">
+          <h2 className="mb-1 text-body-sm font-semibold uppercase tracking-wide text-stone-400">Responsable du compte</h2>
+          <p className="mb-4 text-body-sm text-stone-600">Une personne de votre entreprise, sans vérification d’habilitation à ce stade.</p>
+
+          {contactLoadStatus === 'error' ? (
+            <p className="text-body-sm text-red-600">Impossible de charger le responsable du compte.</p>
+          ) : (
+            <div className="flex max-w-2xl flex-col gap-5">
+              <div className="grid gap-4 md:grid-cols-2">
+                <Input label="Prénom" value={contactFirstName} onChange={(event) => setContactFirstName(event.target.value)} required />
+                <Input label="Nom" value={contactLastName} onChange={(event) => setContactLastName(event.target.value)} required />
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <Input label="Email" type="email" value={email} disabled hint="Email du compte Locadely" />
+                <Input
+                  label="Téléphone"
+                  type="tel"
+                  inputMode="tel"
+                  placeholder="06 12 34 56 78"
+                  value={contactPhone}
+                  onChange={(event) => setContactPhone(event.target.value)}
+                  error={contactPhone.trim().length > 0 && !contactPhoneValid ? 'Numéro français invalide' : undefined}
+                  required
+                />
+              </div>
+              <Button type="button" onClick={() => void handleSaveAccountContact()} disabled={!canSaveContact} className="self-start">
+                {isSavingContact ? <><Loader2 className="h-4 w-4 animate-spin" />Enregistrement…</> : 'Enregistrer le responsable'}
+              </Button>
+            </div>
+          )}
+        </section>
+
+        <section className="rounded-2xl border border-border bg-surface p-5 shadow-md md:p-6">
           <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
             <div>
               <h2 className="text-body-sm font-semibold uppercase tracking-wide text-stone-400">Informations légales et facturation</h2>
@@ -884,6 +1194,12 @@ export default function AccountPage() {
 
               {legalDraft.sireneWarning !== null && (
                 <p className="rounded-md bg-accent-100 px-3.5 py-2.5 text-body-sm text-accent-800">{legalDraft.sireneWarning}</p>
+              )}
+
+              {electronicInvoicingStatusInfo(electronicInvoicingStatus) !== null && (
+                <p className={cn('rounded-md px-3.5 py-2.5 text-body-sm', electronicInvoicingStatusInfo(electronicInvoicingStatus)?.className)}>
+                  {electronicInvoicingStatusInfo(electronicInvoicingStatus)?.label}
+                </p>
               )}
 
               <Input
@@ -943,9 +1259,91 @@ export default function AccountPage() {
                 }}
               />
 
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="flex flex-col gap-1.5">
+                  <label htmlFor="vat-regime" className="text-body-sm font-semibold text-stone-800">Régime de TVA</label>
+                  <select
+                    id="vat-regime"
+                    value={legalDraft.vatRegime}
+                    onChange={(event) => {
+                      setLegalTouched(true)
+                      const value = event.target.value
+                      setLegalDraft((current) => ({ ...current, vatRegime: value === '' ? '' : (value as VatRegime) }))
+                    }}
+                    className="h-14 w-full rounded-md border-[1.5px] border-border bg-surface px-3.5 text-body-lg text-stone-800 outline-none transition-colors duration-fast ease-default focus:border-primary-600"
+                  >
+                    <option value="">Non renseigné</option>
+                    {VAT_REGIME_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <Input
+                  label="Forme juridique (optionnel)"
+                  placeholder="SARL, SAS, EI…"
+                  value={legalDraft.legalForm}
+                  onChange={(event) => {
+                    setLegalTouched(true)
+                    setLegalDraft((current) => ({ ...current, legalForm: event.target.value }))
+                  }}
+                />
+              </div>
+
+              <Input
+                label="Référence acheteur / code de routage de facturation électronique (optionnel)"
+                placeholder="Ex. DEPT-42"
+                value={legalDraft.buyerReference}
+                onChange={(event) => {
+                  setLegalTouched(true)
+                  setLegalDraft((current) => ({ ...current, buyerReference: event.target.value }))
+                }}
+                hint="À renseigner uniquement si votre plateforme de facturation ou votre service comptable vous a fourni une référence spécifique."
+              />
+
               <Button type="button" onClick={() => void handleSaveLegalInformation()} disabled={!canSaveLegalInformation} className="self-start">
                 {isSavingLegalInformation ? <><Loader2 className="h-4 w-4 animate-spin" />Enregistrement…</> : 'Enregistrer les informations légales'}
               </Button>
+            </div>
+          )}
+        </section>
+
+        <section className="rounded-2xl border border-border bg-surface p-5 shadow-md md:p-6">
+          <h2 className="mb-1 text-body-sm font-semibold uppercase tracking-wide text-stone-400">Documents</h2>
+          <p className="mb-4 text-body-sm text-stone-600">Pièces privées, jamais accessibles publiquement.</p>
+
+          {documentsLoadStatus === 'error' ? (
+            <p className="text-body-sm text-red-600">Impossible de charger les documents.</p>
+          ) : (
+            <div className="flex max-w-2xl flex-col gap-4">
+              <input ref={identityFileInputRef} type="file" accept="application/pdf,image/jpeg,image/png" className="sr-only" onChange={(event) => void handleUploadDocument('identity_document', event)} />
+              <input ref={businessDocFileInputRef} type="file" accept="application/pdf,image/jpeg,image/png" className="sr-only" onChange={(event) => void handleUploadDocument('business_registration_document', event)} />
+
+              {(['identity_document', 'business_registration_document'] as const).map((documentType) => {
+                const current = documents.find((document) => document.documentType === documentType)
+                const busy = documentBusy === documentType
+                const inputRef = documentType === 'identity_document' ? identityFileInputRef : businessDocFileInputRef
+                return (
+                  <div key={documentType} className="flex flex-col gap-2 rounded-xl border border-border bg-stone-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-body-sm font-semibold text-stone-800">{DOCUMENT_LABELS[documentType].title}</p>
+                      <p className="text-body-sm text-stone-500">
+                        {current !== undefined ? `Déposé le ${new Date(current.uploadedAt).toLocaleDateString('fr-FR')}` : 'À déposer'}
+                      </p>
+                      <p className="text-label text-stone-400">{DOCUMENT_LABELS[documentType].hint}</p>
+                    </div>
+                    <div className="flex shrink-0 gap-2">
+                      <Button type="button" variant="secondary" onClick={() => inputRef.current?.click()} disabled={busy}>
+                        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : current !== undefined ? 'Remplacer' : 'Ajouter'}
+                      </Button>
+                      {current !== undefined && (
+                        <Button type="button" variant="secondary" onClick={() => void handleDeleteDocument(documentType)} disabled={busy}>
+                          Supprimer
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           )}
         </section>

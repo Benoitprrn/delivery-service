@@ -2,7 +2,7 @@
 
 import dynamic from 'next/dynamic'
 import Link from 'next/link'
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -118,7 +118,7 @@ export default function NewOrderPage() {
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const lastFetchedAddressRef = useRef('')
-  const allSlotsRef = useRef<TimeSlot[]>(buildTimeSlots())
+  const allSlots = useMemo(() => buildTimeSlots(), [])
 
   const phoneValid = FRENCH_MOBILE_REGEX.test(phone.trim())
   const emailValid = email.trim().length === 0 || EMAIL_REGEX.test(email.trim())
@@ -172,7 +172,7 @@ export default function NewOrderPage() {
     const selectedSlot = selectedSlotIndex === undefined ? undefined : availableSlots[selectedSlotIndex]
 
     setDraftDayIndex(nextDayIndex)
-    setDraftSlotIndex(collectionKind === 'scheduled' && selectedSlot !== undefined ? allSlotsRef.current.indexOf(selectedSlot) : undefined)
+    setDraftSlotIndex(collectionKind === 'scheduled' && selectedSlot !== undefined ? allSlots.indexOf(selectedSlot) : undefined)
     setIsScheduleDialogOpen(true)
   }
 
@@ -181,8 +181,8 @@ export default function NewOrderPage() {
       return
     }
 
-    const slot = allSlotsRef.current[draftSlotIndex]
-    const slots = filterSlotsForDay(allSlotsRef.current, draftDayIndex, new Date())
+    const slot = allSlots[draftSlotIndex]
+    const slots = filterSlotsForDay(allSlots, draftDayIndex, new Date())
     const slotIndex = slot === undefined ? -1 : slots.indexOf(slot)
     if (slotIndex === -1) {
       return
@@ -230,14 +230,15 @@ export default function NewOrderPage() {
         !isRecord(body) ||
         typeof body.distanceM !== 'number' ||
         typeof body.durationS !== 'number' ||
-        typeof body.priceCents !== 'number' ||
+        typeof body.deliveryCents !== 'number' ||
+        typeof body.serviceFeeCents !== 'number' ||
         typeof body.deliveryLat !== 'number' ||
         typeof body.deliveryLng !== 'number'
       ) {
         throw new Error('Adresse non reconnue')
       }
 
-      setEstimate({ distanceM: body.distanceM, durationS: body.durationS, priceCents: body.priceCents })
+      setEstimate({ distanceM: body.distanceM, durationS: body.durationS, deliveryCents: body.deliveryCents, serviceFeeCents: body.serviceFeeCents })
       setDeliveryCoords({ lat: body.deliveryLat, lng: body.deliveryLng })
       setGeometry(isGeometry(body.geometry) ? body.geometry : undefined)
       setPriceStatus('success')
@@ -312,7 +313,7 @@ export default function NewOrderPage() {
     setDelayMinutes(30)
     setDelayEstimatedAt(undefined)
     setSelectedDayIndex(0)
-    const slots = filterSlotsForDay(allSlotsRef.current, 0, new Date())
+    const slots = filterSlotsForDay(allSlots, 0, new Date())
     setAvailableSlots(slots)
     setSelectedSlotIndex(slots.length > 0 ? 0 : undefined)
     setPhoneTouched(false)
@@ -326,8 +327,8 @@ export default function NewOrderPage() {
 
   const selectedDay = dayOptions[selectedDayIndex]
   const selectedSlot = selectedSlotIndex !== undefined ? availableSlots[selectedSlotIndex] : undefined
-  const draftAvailableSlots = filterSlotsForDay(allSlotsRef.current, draftDayIndex, new Date())
-  const draftSlot = draftSlotIndex === undefined ? undefined : allSlotsRef.current[draftSlotIndex]
+  const draftAvailableSlots = filterSlotsForDay(allSlots, draftDayIndex, new Date())
+  const draftSlot = draftSlotIndex === undefined ? undefined : allSlots[draftSlotIndex]
   const draftScheduleLabel =
     draftSlot === undefined || dayOptions[draftDayIndex] === undefined
       ? undefined
@@ -444,7 +445,7 @@ export default function NewOrderPage() {
     priceStatus === 'success' && estimate !== undefined ? `${Math.round(estimate.durationS / 60)} min` : undefined
   const priceLabel =
     priceStatus === 'success' && estimate !== undefined
-      ? `${(estimate.priceCents / 100).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`
+      ? `${((estimate.deliveryCents + estimate.serviceFeeCents) / 100).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`
       : undefined
 
   return (
@@ -678,7 +679,7 @@ export default function NewOrderPage() {
 
             <div className="min-h-0 max-h-[min(50dvh,360px)] overflow-y-auto pr-1">
               <div className="grid grid-cols-5 gap-2">
-                {allSlotsRef.current.map((slot, index) => {
+                {allSlots.map((slot, index) => {
                   const isAvailable = draftAvailableSlots.includes(slot)
                   const isSelected = draftSlotIndex === index
 

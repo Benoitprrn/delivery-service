@@ -4,6 +4,8 @@ import type { OrderRepository } from '../ports/order-repository.js'
 import { DriverPayoutAccountNotReadyError } from '../domain/errors.js'
 import type { DriverCapacityWriter } from '../ports/driver-capacity-writer.js'
 import type { DriverEligibility } from '../ports/driver-eligibility.js'
+import type { DriverInvoiceReadiness } from '../ports/driver-invoice-readiness.js'
+import { DriverInvoiceInformationNotReadyError } from '../domain/errors.js'
 
 export type AssignOrderCommand = {
   orderId: string
@@ -18,11 +20,13 @@ export class AssignOrderUseCase {
     private readonly orderRepository: OrderRepository,
     private readonly capacityWriter: DriverCapacityWriter,
     // Défaut permissif réservé aux tests du module : `app.ts` injecte toujours la vraie garde D-F (fail-closed).
-    private readonly eligibility: DriverEligibility = { isEligible: async () => true }
+    private readonly eligibility: DriverEligibility = { isEligible: async () => true },
+    private readonly invoiceReadiness: DriverInvoiceReadiness = { isReady: async () => true }
   ) {}
 
   public async execute(command: AssignOrderCommand): Promise<Order> {
     if (!(await this.eligibility.isEligible(command.driverId))) throw new DriverPayoutAccountNotReadyError()
+    if (!(await this.invoiceReadiness.isReady(command.driverId))) throw new DriverInvoiceInformationNotReadyError()
     const order = await this.orderRepository.assign(
       command.orderId,
       command.driverId,

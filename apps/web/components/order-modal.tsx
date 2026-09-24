@@ -1,6 +1,7 @@
 'use client'
 
-import { Camera, Clock, CreditCard, Link2, MapPin, Phone, Route, UserRound } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Camera, ChevronDown, ChevronUp, Clock, CreditCard, FileText, Link2, MapPin, Phone, Route, UserRound } from 'lucide-react'
 import { useToast } from '@/components/toast-provider'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import {
@@ -11,10 +12,12 @@ import {
   formatPriceEuros,
   hasChargeablePrice,
   orderProgressSteps,
+  orderTotalCents,
   STATUS_CONFIG,
   type Order,
   type ProgressStep
 } from '@/lib/orders'
+import { getInvoiceDocumentFacturXUrl, getOrderDocuments, invoiceDisplayLabel, transmissionStatusLabel, type OrderDocuments } from '@/lib/invoices'
 import { cn } from '@/lib/utils'
 
 export type OrderModalProps = {
@@ -88,13 +91,32 @@ function ProgressBar({ order }: { order: Order }) {
 
 export function OrderModal({ order, onOpenChange }: OrderModalProps) {
   const { showToast } = useToast()
+  const [showPriceDetail, setShowPriceDetail] = useState(false)
+  const [documents, setDocuments] = useState<OrderDocuments | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    const fetchDocuments = order !== null && order.status === 'COMPLETED' ? getOrderDocuments(order.id) : Promise.resolve(null)
+    void fetchDocuments.then((result) => { if (!cancelled) setDocuments(result) })
+    return () => { cancelled = true }
+  }, [order?.id, order?.status])
+
+  async function openFacturX(documentId: string, kind: 'invoice' | 'credit_note') {
+    if (order === null) return
+    const url = await getInvoiceDocumentFacturXUrl(order.id, documentId, kind)
+    if (url === null) {
+      showToast({ variant: 'info', title: 'Document indisponible', message: 'Le document n’est pas encore prêt. Réessayez plus tard.' })
+      return
+    }
+    window.open(url, '_blank', 'noopener,noreferrer')
+  }
 
   return (
     <Dialog open={order !== null} onOpenChange={onOpenChange}>
       {order !== null && (
         <DialogContent className="inset-4 z-[710] h-auto w-auto max-w-3xl overflow-hidden rounded-2xl border bg-surface p-0 shadow-2xl sm:left-1/2 sm:top-1/2 sm:right-auto sm:bottom-auto sm:max-h-[calc(100dvh-2rem)] sm:w-[min(48rem,calc(100vw-2rem))] sm:-translate-x-1/2 sm:-translate-y-1/2">
           <DialogHeader className="shrink-0 pr-14">
-            <DialogTitle>Livraison #{order.id.slice(-6)}</DialogTitle>
+            <DialogTitle>Livraison #{order.publicReference}</DialogTitle>
             <span
               className={cn(
                 'mt-2 inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-body-sm font-semibold',
@@ -133,7 +155,28 @@ export function OrderModal({ order, onOpenChange }: OrderModalProps) {
               <Section title="Livraison">
                 <div className="space-y-2 text-body text-stone-700">
                   <p className="flex items-center gap-2"><Clock className="h-4 w-4 text-stone-400" />Collecte : {formatPickupScheduledAt(order.pickupScheduledAt)}</p>
-                  <p className="flex items-center gap-2"><Route className="h-4 w-4 text-stone-400" />{formatDistanceKm(order.distanceM)} km · {formatDurationMin(order.durationS)} min · <span className="font-semibold">{hasChargeablePrice(order.status) ? `${formatPriceEuros(order.priceCents)} € HT` : '—'}</span></p>
+                  <p className="flex items-center gap-2">
+                    <Route className="h-4 w-4 text-stone-400" />
+                    {formatDistanceKm(order.distanceM)} km · {formatDurationMin(order.durationS)} min ·{' '}
+                    <span className="font-semibold">{hasChargeablePrice(order.status) ? `${formatPriceEuros(orderTotalCents(order))} € HT` : '—'}</span>
+                    {hasChargeablePrice(order.status) && order.deliveryCents !== null && order.serviceFeeCents !== null && (
+                      <button
+                        type="button"
+                        onClick={() => setShowPriceDetail((value) => !value)}
+                        className="inline-flex items-center gap-0.5 text-body-sm text-stone-400 transition-colors hover:text-primary-700"
+                        aria-expanded={showPriceDetail}
+                      >
+                        Détail
+                        {showPriceDetail ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                      </button>
+                    )}
+                  </p>
+                  {showPriceDetail && order.deliveryCents !== null && order.serviceFeeCents !== null && (
+                    <div className="ml-6 space-y-1 rounded-lg bg-stone-50 px-3 py-2 text-body-sm text-stone-600">
+                      <p className="flex items-center justify-between"><span>Livraison</span><span className="font-medium text-stone-800">{formatPriceEuros(order.deliveryCents)} € HT</span></p>
+                      <p className="flex items-center justify-between"><span>Frais de service Locadely</span><span className="font-medium text-stone-800">{formatPriceEuros(order.serviceFeeCents)} € HT</span></p>
+                    </div>
+                  )}
                                   {order.cashOnDelivery?.required === true && order.cashOnDelivery.amountCents !== null && (
                     <p className="flex items-center gap-2 font-medium text-stone-800">
                       <CreditCard className="h-4 w-4 text-stone-400" />
@@ -180,6 +223,51 @@ export function OrderModal({ order, onOpenChange }: OrderModalProps) {
                       Voir la preuve
                     </button>
                   ) : null}
+                </Section>
+              )}
+
+              {order.status === 'COMPLETED' && documents !== null && documents.invoices.length > 0 && (
+                <Section title="Documents">
+                  <div className="space-y-2 text-body text-stone-700">
+                    {documents.invoices.map((invoice) => (
+                      <div key={invoice.id} className="flex items-center gap-2">
+                        <FileText className="h-4 w-4 shrink-0 text-stone-400" />
+                        <span className="flex-1">
+                          {invoiceDisplayLabel(invoice)} {invoice.number}
+                          <span className="ml-2 text-body-sm text-stone-500">
+                            {formatPriceEuros(invoice.totalHtCents)} € HT · {transmissionStatusLabel(invoice)}
+                          </span>
+                        </span>
+                        {invoice.facturXAvailable && (
+                          <button
+                            type="button"
+                            onClick={() => void openFacturX(invoice.id, 'invoice')}
+                            className="shrink-0 text-body-sm font-semibold text-primary-700 transition-colors hover:text-primary-800 hover:underline"
+                          >
+                            Voir le document
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                    {documents.creditNotes.map((credit) => (
+                      <div key={credit.id} className="flex items-center gap-2 text-body-sm text-stone-500">
+                        <FileText className="h-4 w-4 shrink-0 text-stone-400" />
+                        <span className="flex-1">
+                          Avoir {credit.number} (facture {credit.originalInvoiceNumber}) — {formatPriceEuros(credit.totalHtCents)} € HT
+                          <span className="ml-2">{transmissionStatusLabel(credit)}</span>
+                        </span>
+                        {credit.facturXAvailable && (
+                          <button
+                            type="button"
+                            onClick={() => void openFacturX(credit.id, 'credit_note')}
+                            className="shrink-0 font-semibold text-primary-700 transition-colors hover:text-primary-800 hover:underline"
+                          >
+                            Voir le document
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 </Section>
               )}
 

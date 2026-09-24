@@ -1,10 +1,33 @@
-/**
- * Vérification croisée de la colonne générée SQL : la base reste la source de
- * vérité à l'écriture. Les opérations sont volontairement entières, comme SQL.
- */
-export function computePriceCents(distanceM: number, durationS: number): number {
-  const distanceComponent = Math.floor((distanceM * 37) / 1_000)
-  const durationComponent = Math.floor((durationS * 22) / 60)
+export type PricingSettings = {
+  ruleVersion: number
+  pickupFeeCents: number
+  kmRateCents: number
+  minuteRateCents: number
+  minimumDeliveryCents: number
+  serviceFeeRateBps: number
+}
 
-  return Math.max(400, 100 + distanceComponent + durationComponent)
+const legacyDefaultSettings: PricingSettings = {
+  ruleVersion: 1,
+  pickupFeeCents: 100,
+  kmRateCents: 37,
+  minuteRateCents: 22,
+  minimumDeliveryCents: 400,
+  serviceFeeRateBps: 2000
+}
+
+/** Mirrors the database trigger's integer formula for pre-order estimates. */
+export function computePriceCents(
+  distanceM: number,
+  durationS: number,
+  settings: PricingSettings = legacyDefaultSettings
+): number {
+  const distanceComponent = Math.floor((distanceM * settings.kmRateCents) / 1_000)
+  const durationComponent = Math.floor((durationS * settings.minuteRateCents) / 60)
+
+  return Math.max(settings.minimumDeliveryCents, settings.pickupFeeCents + distanceComponent + durationComponent)
+}
+
+export function computeServiceFeeCents(deliveryCents: number, serviceFeeRateBps: number): number {
+  return Math.floor((deliveryCents * serviceFeeRateBps) / 10_000)
 }

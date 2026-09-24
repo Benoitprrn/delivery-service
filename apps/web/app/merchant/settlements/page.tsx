@@ -38,7 +38,7 @@ function SettlementCard({ settlement }: { settlement: MerchantSettlementView }) 
           <span className={cn('mt-2 inline-flex rounded-full px-2.5 py-0.5 text-body-sm font-semibold', state.className)}>{state.label}</span>
         </div>
         <div className="text-right">
-          <p className="text-h3 font-bold text-stone-800">{formatEuros(settlement.amountCents)}</p>
+          <p className="text-h3 font-bold text-stone-800">{formatEuros(settlement.amountCents)} HT</p>
           {open ? <ChevronUp className="ml-auto mt-1 h-5 w-5 text-stone-400" /> : <ChevronDown className="ml-auto mt-1 h-5 w-5 text-stone-400" />}
         </div>
       </button>
@@ -61,6 +61,11 @@ function SettlementCard({ settlement }: { settlement: MerchantSettlementView }) 
           {error !== null && <p className="text-body-sm text-red-600">{error}</p>}
           {detail !== null && (
             <>
+              <div className="mb-3 space-y-1 rounded-lg bg-stone-50 px-3 py-2 text-body-sm text-stone-600">
+                <p className="flex items-center justify-between"><span>Livraisons</span><span className="font-medium text-stone-800">{formatEuros(detail.settlement.deliveryCents)} HT</span></p>
+                <p className="flex items-center justify-between"><span>Frais de service Locadely</span><span className="font-medium text-stone-800">{formatEuros(detail.settlement.serviceFeeCents)} HT</span></p>
+                <p className="flex items-center justify-between border-t border-border pt-1 font-semibold text-stone-800"><span>Total</span><span>{formatEuros(detail.settlement.amountCents)} HT</span></p>
+              </div>
               {detail.attempts.length > 0 && (
                 <div className="mb-3">
                   <h3 className="text-body-sm font-semibold text-stone-700">Tentatives de prélèvement</h3>
@@ -74,9 +79,12 @@ function SettlementCard({ settlement }: { settlement: MerchantSettlementView }) 
               <h3 className="text-body-sm font-semibold text-stone-700">Courses de la période</h3>
               <ul className="mt-1 divide-y divide-border">
                 {detail.lines.map((line) => (
-                  <li key={line.orderId} className="flex items-center justify-between py-1.5 text-body-sm">
-                    <span className="text-stone-600">{formatDateTime(line.finalizedAt)}{line.status === 'RETURNED' ? ' · course retournée' : ''}</span>
-                    <span className="font-semibold text-stone-800">{formatEuros(line.amountCents)}</span>
+                  <li key={line.orderId} className="py-1.5 text-body-sm">
+                    <div className="flex items-center justify-between">
+                      <span className="text-stone-600">{formatDateTime(line.finalizedAt)}{line.status === 'RETURNED' ? ' · course retournée' : ''}</span>
+                      <span className="font-semibold text-stone-800">{formatEuros(line.amountCents)}</span>
+                    </div>
+                    <p className="text-body-sm text-stone-400">Livraison {formatEuros(line.deliveryCents)} + service {formatEuros(line.serviceFeeCents)}</p>
                   </li>
                 ))}
               </ul>

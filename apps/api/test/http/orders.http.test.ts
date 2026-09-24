@@ -58,6 +58,9 @@ async function createValidOrder(
 // D-D (ADR 0004) : ces tests créent des commandes sans données de règlement en base ; la garde réelle est testée séparément.
 const settlementReady = { check: async () => ({ ready: true as const }) }
 const driverEligible = { isEligible: async () => true }
+// D-D même principe pour la garde « invoice readiness » (Étape 4) : ces commandes n'ont pas de
+// données légales livreur en base, la garde réelle est testée séparément (test/invoices).
+const driverInvoiceReady = { isReady: async () => true }
 
 describe('orders HTTP endpoints', () => {
   beforeAll(async () => {
@@ -83,7 +86,7 @@ describe('orders HTTP endpoints', () => {
   })
 
   beforeEach(async () => {
-    app = await buildApp({ connectProvider: activeCardPayments, merchantSettlementReadiness: settlementReady, driverEligibility: driverEligible })
+    app = await buildApp({ connectProvider: activeCardPayments, merchantSettlementReadiness: settlementReady, driverEligibility: driverEligible, driverInvoiceReadiness: driverInvoiceReady })
   })
 
   afterEach(async () => {
@@ -206,7 +209,7 @@ describe('orders HTTP endpoints', () => {
     it('refuses a COD order with 409 CardPaymentsNotReady while card_payments is not active, but not a non-COD order', async () => {
       const pending = new FakeConnectPaymentsProvider()
       pending.accountStatus = { ...pending.accountStatus, cardPayments: 'pending' }
-      const guarded = await buildApp({ connectProvider: pending, merchantSettlementReadiness: settlementReady, driverEligibility: driverEligible })
+      const guarded = await buildApp({ connectProvider: pending, merchantSettlementReadiness: settlementReady, driverEligibility: driverEligible, driverInvoiceReadiness: driverInvoiceReady })
       try {
         const countOrders = async (): Promise<number> => Number((await pool.query<{ count: string }>(
           'select count(*) from orders where merchant_id = $1', [merchantId]
@@ -225,7 +228,7 @@ describe('orders HTTP endpoints', () => {
     })
 
     it('refuses a COD order when the merchant has no Stripe Account or Stripe is unavailable (fail closed)', async () => {
-      const unavailable = await buildApp({ merchantSettlementReadiness: settlementReady, driverEligibility: driverEligible })
+      const unavailable = await buildApp({ merchantSettlementReadiness: settlementReady, driverEligibility: driverEligible, driverInvoiceReadiness: driverInvoiceReady })
       try {
         const response = await postOrder(unavailable, { amountCents: 5000 })
         expect(response.statusCode).toBe(409)

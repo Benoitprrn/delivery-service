@@ -41,9 +41,9 @@ describe.skipIf(!isolated)('settlement read model on PostgreSQL (R80)', () => {
     expect(periods[0]).toMatchObject({ promiseDeadline: '2026-09-21' })
     expect(periods[0]!.payrunAt?.toISOString()).toBe(PAYRUN.toISOString())
     const byMerchant = new Map(periods[0]!.statements.map((s) => [s.merchantId, s]))
-    expect(byMerchant.get(merchantId(1))).toMatchObject({ dueCents: 380, paidCents: 380, status: 'paid', settlementStatus: 'succeeded', debit: { attemptNo: 1, status: 'succeeded' }, incidentOpen: false })
-    expect(byMerchant.get(merchantId(2))).toMatchObject({ dueCents: 728, paidCents: 0, status: 'unpaid_restaurant', settlementStatus: 'failed', debit: { attemptNo: 1, status: 'failed' } })
-    expect(byMerchant.get(merchantId(3))).toMatchObject({ dueCents: 321, paidCents: 0, status: 'waiting_sepa', debit: { attemptNo: 1, status: 'processing' } })
+    expect(byMerchant.get(merchantId(1))).toMatchObject({ dueCents: 475, paidCents: 475, status: 'paid', settlementStatus: 'succeeded', debit: { attemptNo: 1, status: 'succeeded' }, incidentOpen: false })
+    expect(byMerchant.get(merchantId(2))).toMatchObject({ dueCents: 909, paidCents: 0, status: 'unpaid_restaurant', settlementStatus: 'failed', debit: { attemptNo: 1, status: 'failed' } })
+    expect(byMerchant.get(merchantId(3))).toMatchObject({ dueCents: 401, paidCents: 0, status: 'waiting_sepa', debit: { attemptNo: 1, status: 'processing' } })
     await expect(repo.listDriverPeriods('d2d2d2d2-0000-4000-8000-0000000000ff', 12)).resolves.toEqual([])
     await expect(repo.listDriverPeriods(driverId(1), 0)).resolves.toEqual([])
   })
@@ -54,7 +54,7 @@ describe.skipIf(!isolated)('settlement read model on PostgreSQL (R80)', () => {
     const attempt = (await pool.query<{ id: string }>('select id from debit_attempts where stripe_charge_id = $1', [charge])).rows[0]!.id
     await new PostgresDebitOpsRepository(pool).applyIncidents({ attemptId: attempt, chargeId: charge, assessment: { incidents: [{ kind: 'dispute', externalId: 'dp_x', amountCents: 475, status: 'lost', reason: 'x' }], chargeUsable: false, restaurantOwedCents: 475 }, now: later(PAYRUN, 5) })
     const statement1 = (await repo.listDriverPeriods(driverId(1), 12))[0]!.statements.find((s) => s.merchantId === merchantId(1))!
-    expect(statement1).toMatchObject({ paidCents: 380, incidentOpen: true }) // statement payé : inchangé, l'incident est seulement exposé
+    expect(statement1).toMatchObject({ paidCents: 475, incidentOpen: true }) // statement payé : inchangé, l'incident est seulement exposé
     void world
   })
 
@@ -62,7 +62,7 @@ describe.skipIf(!isolated)('settlement read model on PostgreSQL (R80)', () => {
     await scenario()
     const rows = await repo.listMerchantSettlements(merchantId(1), 26)
     expect(rows).toHaveLength(1)
-    expect(rows[0]).toMatchObject({ amountCents: 475, deliveriesCount: 1, status: 'succeeded', retryRequested: false, openReceivablesCents: 0, incidents: [] })
+    expect(rows[0]).toMatchObject({ amountCents: 570, deliveriesCount: 1, status: 'succeeded', retryRequested: false, openReceivablesCents: 0, incidents: [] })
     expect(rows[0]!.preNotification).toMatchObject({ attemptNo: 1, status: 'sent', debitDate: '2026-09-02', ibanLast4: '4242', mandateReference: 'MANDATE-1' })
     expect(rows[0]!.attempts.map((a) => [a.attemptNo, a.status])).toEqual([[1, 'succeeded']])
 
@@ -76,9 +76,11 @@ describe.skipIf(!isolated)('settlement read model on PostgreSQL (R80)', () => {
     await expect(repo.getMerchantSettlement(merchantId(2), await settlementOf(1))).resolves.toBeNull()
     const detail = await repo.getMerchantSettlement(merchantId(1), await settlementOf(1))
     expect(detail!.lines).toHaveLength(1)
-    expect(detail!.lines[0]).toMatchObject({ finalStatus: 'COMPLETED', merchantAmountCents: 475 })
-    expect(Object.keys(detail!.lines[0]!).sort()).toEqual(['finalStatus', 'finalizedAt', 'merchantAmountCents', 'orderId'])
-    expect(JSON.stringify(detail)).not.toMatch(/driver|earning|fee|acct_|pi_|ch_|py_/i)
+    expect(detail!.lines[0]).toMatchObject({ finalStatus: 'COMPLETED', merchantAmountCents: 570, deliveryCents: 475, serviceFeeCents: 95 })
+    expect(Object.keys(detail!.lines[0]!).sort()).toEqual(['deliveryCents', 'finalStatus', 'finalizedAt', 'merchantAmountCents', 'orderId', 'serviceFeeCents'])
+    // Le restaurant voit désormais SA propre décomposition livraison/service (ADR 0005, SF10) — jamais l'identité ou les
+    // identifiants Stripe du livreur ni de la commande, qui restent exclus.
+    expect(JSON.stringify(detail)).not.toMatch(/driverId|driverName|earning|acct_|pi_|ch_|py_/i)
     await expect(repo.listMerchantSettlements(merchantId(3), 0)).resolves.toEqual([])
   })
 
@@ -101,7 +103,7 @@ describe.skipIf(!isolated)('settlement read model on PostgreSQL (R80)', () => {
     expect(overview.incidents).toMatchObject([{ merchantId: merchantId(1), kind: 'dispute', amountCents: 475, status: 'lost', receivableStatus: 'open' }])
     expect(overview.receivables).toMatchObject([{ scope: 'merchant', ownerId: merchantId(1), kind: 'sepa_dispute', amountCents: 475, status: 'open' }])
     expect(overview.findings).toMatchObject([{ kind: 'debit_disputed_after_success', scope: 'restaurant' }])
-    expect(overview.transfers).toMatchObject([{ driverId: driverId(1), merchantId: merchantId(1), amountCents: 380, status: 'succeeded', reversedCents: 0 }])
+    expect(overview.transfers).toMatchObject([{ driverId: driverId(1), merchantId: merchantId(1), amountCents: 475, status: 'succeeded', reversedCents: 0 }])
     expect(overview.reversals).toMatchObject([{ driverId: driverId(1), status: 'pending_approval', reasonCode: 'fraud', amountCents: 100, requestedBy: ADMIN, approvedBy: null }])
     expect(overview.blockedStatements.map((b) => [b.merchantId, b.holdReason])).toEqual(expect.arrayContaining([[merchantId(2), 'unpaid_restaurant']]))
     expect(overview.deadLetters).toMatchObject([{ eventType: 'charge.dispute.created', attemptCount: 15, lastErrorClass: 'UnknownSettlementObjectError' }])

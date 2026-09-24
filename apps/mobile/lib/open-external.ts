@@ -23,3 +23,8 @@ export function openHostedOnboarding(): Promise<boolean> {
 export function openStripeDashboard(): Promise<boolean> {
   return open(async () => (await api.createPayoutDashboardLink()).url, 'Impossible d’ouvrir votre espace Stripe.');
 }
+
+// URL signée courte (générée à la demande, jamais persistée) du PDF de mandat déjà signé.
+export function openMandatePdf(): Promise<boolean> {
+  return open(async () => (await api.getMandatePdfUrl()).url, 'Impossible d’ouvrir votre mandat signé.');
+}

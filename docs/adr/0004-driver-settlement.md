@@ -1,21 +1,32 @@
 # ADR 0004 — Règlement des livreurs : Stripe Connect, paiement groupé, impayé restaurant
 
-Statut : validé — 2026-09-21 (G1 validé ; canary live G3 encore ouvert)
+Statut : validé — 2026-09-21 (G1 validé ; canary live G3 encore ouvert). **Amendé le
+2026-09-22 (ADR 0005)** : la clause « Frais Locadely : 20 % du gain de CHAQUE course »
+ci-dessous est FAUSSE — ce n'est pas une commission prélevée sur le livreur, mais un montant
+additif dû par le restaurant. Le reste de cet ADR (cycle, Separate Charges and Transfers,
+paiement groupé, impayé restaurant, reversals, comptes livreurs) reste en vigueur. Correction
+livrée, chantier `docs/work/pricing-service-fee-plan.md` (SF1-SF13, terminé le 2026-09-23) —
+le montant du Transfer livreur est le plein `delivery_cents` (SF6/SF8).
 
 ## Contexte
 
 Les livreurs sont indépendants et travaillent pour plusieurs restaurants. Locadely
-prélève chaque restaurant par SEPA, puis verse aux livreurs ce qui a réellement été
-encaissé, après déduction de ses frais. Le plan complet et les résultats des essais
-Stripe Sandbox (SP1–SP7) sont dans `docs/work/driver-settlement-plan.md`.
+prélève chaque restaurant par SEPA (`delivery_cents + service_fee_cents`, ADR 0005), puis
+verse aux livreurs 100 % de `delivery_cents` par Transfer et garde `service_fee_cents` sur
+son propre solde. Le plan complet et les résultats des essais Stripe Sandbox (SP1–SP7) sont
+dans `docs/work/driver-settlement-plan.md`.
 
 ## Décision
 
-- **Frais Locadely** : 20 % du gain de CHAQUE course, en entiers :
+- ~~**Frais Locadely** : 20 % du gain de CHAQUE course, en entiers :
   `fee_cents = floor(driver_earning_cents × 20 / 100)` (401 → 80, 475 → 95,
-  909 → 181), jamais calculé sur le total. Le taux (2000 bps) et la version de règle
-  sont figés sur la ligne. Le gain vient de `orders.driver_earning_cents` (ADR 0002),
-  jamais recalculé ; une course `RETURNED` est rémunérée comme une course
+  909 → 181), jamais calculé sur le total.~~ **FAUX, voir ADR 0005** : les frais de service
+  ne sont pas une commission prélevée sur le gain du livreur — ils s'ajoutent au montant dû
+  par le restaurant (`service_fee_cents`, 20 % par défaut de `delivery_cents`, configurable).
+  Le livreur reçoit 100 % de `delivery_cents`. Le taux et la version de règle restent figés
+  sur la commande (désormais via `pricing_settings.rule_version`, pas `fee_rate_bps` sur la
+  ligne de règlement). Le gain vient de `orders.delivery_cents` (ex-`driver_earning_cents`,
+  ADR 0002/0005), jamais recalculé ; une course `RETURNED` est rémunérée comme une course
   `COMPLETED` ; `RETURNING` et `CANCELLED` ne sont jamais réglées.
 - **Cycle** : lundi = clôture de la période (bornes lundi 00:00 Europe/Paris → UTC) et
   pré-notification du restaurant ; mercredi (avant 10:30 CET) = un PaymentIntent SEPA

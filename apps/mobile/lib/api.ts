@@ -3,8 +3,9 @@ import type { DispatchOffer } from './dispatch-types';
 import type { AvailableOrder, DriverHistoryOrder, DriverOrder, DriverProfile, Order } from './orders-types';
 import type { ReaderFamily } from './terminal/reader-adapter';
 import type { PayoutAccountState, PayoutEntityType, PayoutSessionPurpose } from './payout-types';
-import type { DriverEarnings } from './wallet-types';
 import type { DriverSettlementsResponse } from './settlements-types';
+import type { MandateStatus, SignedMandate } from './mandate-types';
+import type { DocumentSubmissionStatus, DocumentTransmissionStatus } from './document-status';
 
 function requireEnv(name: string, value: string | undefined): string {
   if (value === undefined || value.length === 0) {
@@ -39,6 +40,13 @@ export type DeliveryProof =
 export type OrderRouteGeometry = {
   type: 'LineString';
   coordinates: [number, number][];
+};
+
+// Miroir de apps/api/src/modules/invoices/ports/invoice-repository.ts (Tranche 5) — voir
+// lib/document-status.ts pour la dérivation d'un libellé sans jargon.
+export type DriverOrderDocuments = {
+  invoices: Array<{ id: string; number: string; issuerKind: 'driver'; invoiceTypeCode: '389'; issuedAt: string; totalHtCents: number; totalVatCents: number; totalTtcCents: number; transmissionStatus: DocumentTransmissionStatus; submissionStatus: DocumentSubmissionStatus; lastError: string | null; facturXAvailable: boolean }>;
+  creditNotes: Array<{ id: string; number: string; originalInvoiceNumber: string; issuedAt: string; totalHtCents: number; totalVatCents: number; totalTtcCents: number; transmissionStatus: DocumentTransmissionStatus; submissionStatus: DocumentSubmissionStatus; lastError: string | null; facturXAvailable: boolean }>;
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -96,6 +104,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> { return request<T>(path, init); }
+export async function uploadMultipart<T>(path: string, form: FormData): Promise<T> {
+  const { data } = await supabase.auth.getSession();
+  const headers = data.session?.access_token === undefined ? {} : { Authorization: `Bearer ${data.session.access_token}` };
+  const response = await fetch(`${API_URL}${path}`, { method: 'POST', body: form, headers });
+  if (!response.ok) throw new ApiError(response.status, 'Échec de l’envoi du document');
+  return response.status === 204 ? undefined as T : await response.json() as T;
+}
+
 
 // --- Finalisation de livraison avec paiement à la livraison (contrat API : docs/work/cod-payment-plan.md, C2b) ---
 export type CompletionPayment = {
@@ -125,6 +142,7 @@ export const api = {
     request<AvailableOrder[]>(`/api/v1/orders/available?zoneId=${encodeURIComponent(zoneId)}`),
   getMyOrders: () => request<{ orders: DriverOrder[] }>('/api/v1/orders/driver'),
   getMyOrderHistory: () => request<{ orders: DriverHistoryOrder[] }>('/api/v1/orders/driver/history'),
+  getOrderDocuments: (orderId: string) => request<DriverOrderDocuments>(`/api/v1/orders/${orderId}/documents`),
   collectOrder: (orderId: string, expectedVersion: number) =>
     request<Order>(`/api/v1/orders/${orderId}/collect`, {
       method: 'POST',
@@ -182,7 +200,6 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ token })
     }),
-  getMyEarnings: () => request<DriverEarnings>('/api/v1/orders/driver/earnings'),
   getMySettlements: (limit?: number) =>
     request<DriverSettlementsResponse>(`/api/v1/drivers/me/settlements${limit === undefined ? '' : `?limit=${encodeURIComponent(limit)}`}`),
   // Compte de paiement Stripe du livreur (R30/R31) : le serveur dérive tout ; le mobile ne fournit ni montant ni identifiant Stripe.
@@ -233,5 +250,20 @@ export const api = {
     request<void>(`/api/v1/dispatch-offers/${offerId}/reject`, {
       method: 'POST',
       body: JSON.stringify({ expectedVersion })
-    })
+    }),
+  // Mandat de facturation électronique (Tranche 4c) : lecture d'état (statut, aperçu du texte
+  // prérempli tant que non signé), acceptation (le serveur fige tout — snapshot, PDF, preuve —
+  // dans une seule transaction locale ; aucun appel Super PDP dans cette requête, voir Tranche 4b),
+  // URL signée courte du PDF déjà signé.
+  getMandateStatus: () => request<MandateStatus>('/api/v1/drivers/me/einvoice-mandate'),
+  acceptMandate: (signatureImageBase64: string, signerFirstName: string, signerLastName: string) =>
+    request<SignedMandate>('/api/v1/drivers/me/einvoice-mandate', {
+      method: 'POST',
+      body: JSON.stringify({ signatureImageBase64, signerFirstName, signerLastName })
+    }),
+  getMandatePdfUrl: () => request<{ url: string }>('/api/v1/drivers/me/einvoice-mandate/pdf-url'),
+  // URL signée courte durée du Factur-X d'une facture/avoir (Tranche 5) — jamais persistée,
+  // demandée à l'ouverture seulement.
+  getInvoiceDocumentFacturXUrl: (orderId: string, documentId: string, kind: 'invoice' | 'credit_note') =>
+    request<{ url: string }>(`/api/v1/orders/${orderId}/documents/${documentId}/factur-x?kind=${kind}`)
 };

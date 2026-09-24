@@ -1,6 +1,10 @@
 # ADR 0002 — Formule de tarification
 
-Statut : validé — 2026-09-11
+Statut : validé — 2026-09-11. **Amendé le 2026-09-22 (ADR 0005)** : la formule
+horokilométrique ci-dessous reste en vigueur (désormais avec paramètres configurables via
+`pricing_settings` au lieu de littéraux en dur), mais la clause « `merchant_price_cents` et
+`driver_earning_cents` reçoivent la même valeur » est FAUSSE dans le nouveau modèle — voir
+ADR 0005 pour `delivery_cents`/`service_fee_cents`.
 
 ## Contexte
 
@@ -39,9 +43,11 @@ if price_cents < 400:
 | 500 m | 180 s (3 min) | 100 + floor(0.5×37)=18 + floor(3×22)=66 → 184 | **400** (plancher) |
 | 7 000 m | 1500 s (25 min) | 100 + floor(7×37)=259 + floor(25×22)=550 | 909 |
 
-`merchant_price_cents` et `driver_earning_cents` reçoivent la même valeur
-(barème unique, pas de marge opérateur au lancement). Le prix est figé sur
-la commande au moment du calcul et n'est jamais recalculé après coup.
+~~`merchant_price_cents` et `driver_earning_cents` reçoivent la même valeur
+(barème unique, pas de marge opérateur au lancement).~~ **FAUX, voir ADR 0005** : le
+restaurant doit `delivery_cents + service_fee_cents`, le livreur reçoit 100 % de
+`delivery_cents` seul. Le prix (`delivery_cents`, ex-`price_cents`) est figé sur la commande
+au moment du calcul et n'est jamais recalculé après coup — cette partie reste vraie.
 
 ## Conséquences
 

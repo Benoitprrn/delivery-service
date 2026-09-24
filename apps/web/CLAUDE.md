@@ -112,6 +112,53 @@ public/             legacy Phase 1 — pages HTML statiques de démo, plus le
   (`js.stripe.com`, `*.js.stripe.com`, `hooks.stripe.com`, `api.stripe.com`),
   OpenCage et Google Fonts. Toute nouvelle origine externe doit y être ajoutée
   avant la mise en production; jamais `default-src *`.
+- Identités légales et documents (Étape 3, `docs/work/invoicing-preparation-plan.md` §5) :
+  `app/merchant/account/page.tsx` a trois nouvelles sections — « Responsable du compte » (avant
+  la section légale), forme juridique/régime TVA ajoutés à « Informations légales et
+  facturation », « Documents » (pièce d'identité du responsable, justificatif d'entreprise
+  générique — libellé UI « Kbis / RCS / extrait K / attestation SIRENE », jamais le mot Kbis
+  comme type technique). Consomme `GET/PATCH /api/v1/merchants/me/account-contact` et
+  `GET/POST/DELETE /api/v1/merchants/me/documents...`. La liste de documents renvoie
+  `{ documents: [...] }` (objet, pas un tableau nu) ; aucun bouton « voir » un document n'est
+  construit (pas demandé, évite d'exposer une URL signée dans le DOM sans besoin réel).
+- Modèle économique livraison/frais de service (SF10, ADR 0005, 2026-09-23) : le devis
+  (`/merchant/new`, `components/price-card.tsx`), le détail d'une commande
+  (`components/order-modal.tsx`) et le détail par course des règlements
+  (`app/merchant/settlements/page.tsx`) affichent tous le total HT en premier
+  (`lib/orders.ts` → `orderTotalCents()` = `deliveryCents + serviceFeeCents`), avec un bouton
+  « Détail » dépliant la décomposition livraison/service. **Jamais un montant présenté comme
+  une soustraction au livreur** — le frais de service est additif, propriété de Locadely,
+  jamais retiré du livreur. `lib/orders.ts` → `hasChargeablePrice()` : seule `CANCELLED` n'a
+  donné lieu à aucun paiement ; `RETURNED` reste facturé et affiche son prix. L'API expose
+  `deliveryCents`/`serviceFeeCents` sur `Order` (commande créée) et sur
+  `MerchantSettlementView`/`MerchantSettlementLineView` (règlements, période et par course) —
+  ajout backend additif signalé et validé avant d'être fait (aucune logique nouvelle, colonnes
+  déjà calculées depuis SF5/SF6). Aucun framework de test frontend dans ce dépôt : vérification
+  par `typecheck`/`lint` + relecture + contrôle du serveur de dev, pas de test automatisé de
+  composant.
+- Documents de facturation (Étape 4, `docs/work/invoicing-preparation-plan.md` §8, enrichi Étape 5
+  Tranche 5 révisée §16) : `components/order-modal.tsx`, section « Documents » (commande
+  `COMPLETED` uniquement, `lib/invoices.ts` → `getOrderDocuments`) — affiche les deux factures
+  (livreur + Locadely, libellé clair, jamais le mot « Locadely » présenté comme une charge déduite
+  du livreur) et les avoirs éventuels (avec la référence de la facture d'origine,
+  `originalInvoiceNumber` — jamais un UUID interne), montant HT + statut sans jargon
+  (`transmissionStatusLabel` combine `transmissionStatus`+`submissionStatus` : « À transmettre »/
+  « En cours d'envoi »/« Traitement en cours »/« Transmise »/« Rejetée »/« Action requise »/
+  « Statut inconnu — vérification nécessaire », fail-closed). Bouton « Voir le document » par
+  facture/avoir quand `facturXAvailable` (`getInvoiceDocumentFacturXUrl`, `GET .../documents/
+  :documentId/factur-x?kind=...` → URL signée courte durée, ouverte dans un nouvel onglet — jamais
+  d'URL publique persistante). `getOrderDocuments` renvoie `null` en cas d'erreur/absence plutôt
+  que de lever — la section ne s'affiche simplement pas.
+- Annuaire électronique + éligibilité de transmission (Étape 5 Tranche 3,
+  `docs/work/invoicing-preparation-plan.md` §14) : `app/merchant/account/page.tsx`, section
+  « Informations légales et facturation », affiche un message sans jargon sous le champ SIRET
+  (« Facturation électronique disponible » / « Votre entreprise n'est pas encore adressable pour la
+  facturation électronique. » / rien tant que le statut est `unknown`) dérivé du champ
+  `electronicInvoicingStatus` renvoyé à la racine par `GET`/`PATCH /api/v1/merchants/me/legal-information`
+  (présent même quand `legalInformation` est `null`). Nouveau champ optionnel « Référence acheteur /
+  code de routage de facturation électronique » (`buyerReference`, texte libre, concept EN16931
+  BT-10 **séparé** de l'adresse électronique — jamais fusionné dans l'UI ni dans le code), juste
+  avant le bouton d'enregistrement.
 
 <!-- BEGIN:nextjs-agent-rules -->
 

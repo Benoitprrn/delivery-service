@@ -1,0 +1,4 @@
+import { createHash } from 'node:crypto'
+import { describe, expect, it } from 'vitest'
+import { hasValidMandateTemplateHash, substituteMandateTemplate } from '../../src/modules/invoices/domain/mandate-template.js'
+describe('mandate template integrity', () => { it('accepts a matching hash and rejects tampering', () => { const text = 'Mandat'; const textSha256 = createHash('sha256').update(text).digest('hex'); expect(hasValidMandateTemplateHash({ version: 1, text, textSha256 })).toBe(true); expect(hasValidMandateTemplateHash({ version: 1, text: 'Autre', textSha256 })).toBe(false) }); it('substitutes provided placeholders globally without touching others or plain text', () => { expect(substituteMandateTemplate('{{one}} {{two}} {{one}}', { one: 'A' })).toBe('A {{two}} A'); expect(substituteMandateTemplate('texte sans jeton', { one: 'A' })).toBe('texte sans jeton') }) })

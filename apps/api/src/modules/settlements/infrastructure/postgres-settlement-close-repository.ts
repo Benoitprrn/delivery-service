@@ -3,7 +3,7 @@ import type { Pool, PoolClient } from 'pg'
 import type { StatementDraft } from '../domain/period-ledger.js'
 import type { ClosePeriodInput, SettlementCloseRepository, SettlementSettings } from '../ports/settlement-close.js'
 
-type SettingsRow = { go_live_at: Date | null; fee_rate_bps: number; fee_rule_version: number; payrun_delay_business_days: number; promise_business_days: number }
+type SettingsRow = { go_live_at: Date | null; payrun_delay_business_days: number; promise_business_days: number }
 
 /**
  * Clôture d'une période (R40). Les horodatages des lignes sont lus EN SQL depuis `orders`/`order_events` (précision microseconde)
@@ -13,10 +13,10 @@ export class PostgresSettlementCloseRepository implements SettlementCloseReposit
   public constructor(private readonly pool: Pool) {}
 
   public async readSettings(): Promise<SettlementSettings> {
-    const result = await this.pool.query<SettingsRow>('select go_live_at, fee_rate_bps, fee_rule_version, payrun_delay_business_days, promise_business_days from settlement_settings where id = true')
+    const result = await this.pool.query<SettingsRow>('select go_live_at, payrun_delay_business_days, promise_business_days from settlement_settings where id = true')
     const row = result.rows[0]
     if (row === undefined) throw new Error('settlement_settings singleton is missing')
-    return { goLiveAt: row.go_live_at, feeRateBps: row.fee_rate_bps, feeRuleVersion: row.fee_rule_version, payrunDelayBusinessDays: row.payrun_delay_business_days, promiseBusinessDays: row.promise_business_days }
+    return { goLiveAt: row.go_live_at, payrunDelayBusinessDays: row.payrun_delay_business_days, promiseBusinessDays: row.promise_business_days }
   }
 
   public async isPeriodClosed(periodStart: Date): Promise<boolean> {
@@ -44,9 +44,9 @@ export class PostgresSettlementCloseRepository implements SettlementCloseReposit
       )
       for (const settlement of input.ledger.merchantSettlements) {
         const settlementId = randomUUID()
-        await client.query('insert into merchant_settlements (id, period_id, merchant_id, amount_cents) values ($1, $2, $3, $4)', [settlementId, periodId, settlement.merchantId, settlement.amountCents])
+        await client.query('insert into merchant_settlements (id, period_id, merchant_id, amount_cents, driver_amount_cents, service_fee_cents) values ($1, $2, $3, $4, $5, $6)', [settlementId, periodId, settlement.merchantId, settlement.amountCents, settlement.driverAmountCents, settlement.serviceFeeCents])
         for (const statement of settlement.statements) {
-          await this.insertStatement(client, { periodId, settlementId, statement, feeRateBps: input.feeRateBps, feeRuleVersion: input.feeRuleVersion })
+          await this.insertStatement(client, { periodId, settlementId, statement })
         }
       }
       await client.query('commit') // les contraintes différées revérifient ici lignes ↔ statements ↔ règlements
@@ -59,29 +59,29 @@ export class PostgresSettlementCloseRepository implements SettlementCloseReposit
     }
   }
 
-  private async insertStatement(client: PoolClient, input: { periodId: string; settlementId: string; statement: StatementDraft; feeRateBps: number; feeRuleVersion: number }): Promise<void> {
+  private async insertStatement(client: PoolClient, input: { periodId: string; settlementId: string; statement: StatementDraft }): Promise<void> {
     const { statement } = input
     const statementId = randomUUID()
     await client.query(
-      `insert into settlement_statements (id, period_id, driver_id, merchant_id, merchant_settlement_id, gross_cents, fee_cents, due_cents)
-       values ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [statementId, input.periodId, statement.driverId, statement.merchantId, input.settlementId, statement.grossCents, statement.feeCents, statement.dueCents]
+      `insert into settlement_statements (id, period_id, driver_id, merchant_id, merchant_settlement_id, due_cents)
+       values ($1, $2, $3, $4, $5, $6)`,
+      [statementId, input.periodId, statement.driverId, statement.merchantId, input.settlementId, statement.dueCents]
     )
     await client.query(
       `insert into settlement_lines (statement_id, period_id, driver_id, merchant_id, order_id, final_status, finalized_at, order_created_at,
-                                     merchant_amount_cents, driver_earning_cents, fee_rate_bps, fee_rule_version, fee_cents)
+                                     delivery_cents, service_fee_cents, pricing_rule_version)
        select $1::uuid, $2::uuid, $3::uuid, $4::uuid, o.id, o.status::text,
               case when o.status = 'COMPLETED' then o.completed_at
                    else (select min(e.created_at) from order_events e where e.order_id = o.id and e.to_status = 'RETURNED') end,
-              o.created_at, l.merchant_amount_cents, l.driver_earning_cents, $5::int, $6::int, l.fee_cents
-         from unnest($7::uuid[], $8::bigint[], $9::bigint[], $10::bigint[]) as l(order_id, merchant_amount_cents, driver_earning_cents, fee_cents)
+              o.created_at, l.delivery_cents, l.service_fee_cents, l.pricing_rule_version
+         from unnest($5::uuid[], $6::bigint[], $7::bigint[], $8::int[]) as l(order_id, delivery_cents, service_fee_cents, pricing_rule_version)
          join orders o on o.id = l.order_id`,
       [
-        statementId, input.periodId, statement.driverId, statement.merchantId, input.feeRateBps, input.feeRuleVersion,
+        statementId, input.periodId, statement.driverId, statement.merchantId,
         statement.lines.map((line) => line.orderId),
-        statement.lines.map((line) => line.merchantAmountCents),
-        statement.lines.map((line) => line.driverEarningCents),
-        statement.lines.map((line) => line.feeCents)
+        statement.lines.map((line) => line.deliveryCents),
+        statement.lines.map((line) => line.serviceFeeCents),
+        statement.lines.map((line) => line.pricingRuleVersion)
       ]
     )
   }

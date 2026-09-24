@@ -17,6 +17,10 @@ describe('charge incidents', () => {
     expect(assessChargeIncidents(view({ dispute: { id: 'dp', status: 'warning_closed', amountCents: 2, reason: null } })).chargeUsable).toBe(true)
     expect(assessChargeIncidents(view({ amountRefundedCents: 1 })).chargeUsable).toBe(false)
   })
+  it('excludes succeeded Locadely service refunds but retains an untracked refund remainder', () => {
+    expect(assessChargeIncidents(view({ amountRefundedCents: 200 }), 200)).toMatchObject({ chargeUsable: true, incidents: [] })
+    expect(assessChargeIncidents(view({ amountRefundedCents: 350 }), 200)).toMatchObject({ chargeUsable: false, restaurantOwedCents: 150, incidents: [{ kind: 'refund', amountCents: 150 }] })
+  })
   it('rejects invalid monetary amounts', () => {
     expect(() => assessChargeIncidents(view({ chargeAmountCents: 1.2 }))).toThrow(InvalidAmountError)
     expect(() => assessChargeIncidents(view({ amountRefundedCents: 1001 }))).toThrow(InvalidAmountError)

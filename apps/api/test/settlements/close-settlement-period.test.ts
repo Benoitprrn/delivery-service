@@ -12,7 +12,7 @@ function harness(over: { goLiveAt?: Date | null; closed?: Set<number> } = {}) {
   const closed = over.closed ?? new Set<number>()
   const closePeriod = vi.fn(async (input: { periodStart: Date }) => { closed.add(input.periodStart.getTime()); return 'closed' as const })
   const repository: SettlementCloseRepository = {
-    readSettings: async () => ({ goLiveAt: over.goLiveAt === undefined ? new Date('2026-08-15T00:00:00.000Z') : over.goLiveAt, feeRateBps: 2000, feeRuleVersion: 1, payrunDelayBusinessDays: 7, promiseBusinessDays: 15 }),
+    readSettings: async () => ({ goLiveAt: over.goLiveAt === undefined ? new Date('2026-08-15T00:00:00.000Z') : over.goLiveAt, payrunDelayBusinessDays: 7, promiseBusinessDays: 15 }),
     isPeriodClosed: async (periodStart) => closed.has(periodStart.getTime()),
     closePeriod
   }

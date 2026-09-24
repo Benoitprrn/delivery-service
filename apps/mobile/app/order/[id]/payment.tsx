@@ -17,7 +17,10 @@ import { showToast } from '../../../lib/toast';
 // capture et termine la commande. Aucun succès n'est affiché avant la réponse de `finalize`.
 
 type Phase = 'loading' | 'connecting' | 'updating' | 'collecting' | 'finalizing' | 'done' | 'error';
-type Failure = { message: string; retry: 'connect' | 'payment' | 'finalize' | 'none' };
+type Failure = {
+  message: string;
+  retry: 'connect' | 'payment' | 'finalize' | 'none';
+};
 
 function statusPhase(status: ReaderStatus): Phase | null {
   if (status.phase === 'discovering' || status.phase === 'connecting') return 'connecting';
@@ -30,32 +33,76 @@ function failureFor(error: unknown): Failure {
   if (error instanceof ReaderError) {
     switch (error.kind) {
       case 'battery_low':
-        return { message: 'Batterie du lecteur trop faible pour la mise à jour. Rechargez-le puis réessayez.', retry: 'connect' };
+        return {
+          message:
+            'Batterie du lecteur trop faible pour la mise à jour. Rechargez-le puis réessayez.',
+          retry: 'connect',
+        };
       case 'update_failed':
-        return { message: 'La mise à jour du lecteur a échoué. Réessayez.', retry: 'connect' };
+        return {
+          message: 'La mise à jour du lecteur a échoué. Réessayez.',
+          retry: 'connect',
+        };
       case 'reader_not_found':
-        return { message: 'Lecteur introuvable. Allumez-le et rapprochez-le du téléphone.', retry: 'connect' };
+        return {
+          message: 'Lecteur introuvable. Allumez-le et rapprochez-le du téléphone.',
+          retry: 'connect',
+        };
       case 'multiple_readers':
-        return { message: 'Plusieurs lecteurs détectés. Éteignez les autres lecteurs à proximité.', retry: 'connect' };
+        return {
+          message: 'Plusieurs lecteurs détectés. Éteignez les autres lecteurs à proximité.',
+          retry: 'connect',
+        };
       case 'permission_denied':
-        return { message: 'Autorisez la localisation et les appareils à proximité dans les réglages.', retry: 'connect' };
+        return {
+          message: 'Autorisez la localisation et les appareils à proximité dans les réglages.',
+          retry: 'connect',
+        };
       case 'token_error':
       case 'network':
-        return { message: 'Connexion impossible. Vérifiez votre réseau puis réessayez.', retry: 'connect' };
+        return {
+          message: 'Connexion impossible. Vérifiez votre réseau puis réessayez.',
+          retry: 'connect',
+        };
       case 'card_declined':
-        return { message: 'Carte refusée. Demandez une autre carte.', retry: 'payment' };
+        return {
+          message: 'Carte refusée. Demandez une autre carte.',
+          retry: 'payment',
+        };
       case 'collect_canceled':
         return { message: 'Paiement annulé.', retry: 'payment' };
       default:
-        return { message: 'Le lecteur a rencontré une erreur. Réessayez.', retry: 'payment' };
+        return {
+          message: 'Le lecteur a rencontré une erreur. Réessayez.',
+          retry: 'payment',
+        };
     }
   }
   if (error instanceof ApiError) {
-    if (error.code === 'PaymentDeclined') return { message: 'Carte refusée. Demandez une autre carte.', retry: 'payment' };
-    if (error.code === 'PaymentNotConfirmed') return { message: 'Le paiement n’est pas encore confirmé. Réessayez dans un instant.', retry: 'finalize' };
-    if (error.code === 'SessionExpired') return { message: 'La session a expiré. Recommencez la livraison depuis le code client.', retry: 'none' };
-    if (error.status >= 500) return { message: 'Service indisponible. Réessayez dans un instant.', retry: 'finalize' };
-    return { message: 'Impossible de terminer la livraison pour le moment.', retry: 'none' };
+    if (error.code === 'PaymentDeclined')
+      return {
+        message: 'Carte refusée. Demandez une autre carte.',
+        retry: 'payment',
+      };
+    if (error.code === 'PaymentNotConfirmed')
+      return {
+        message: 'Le paiement n’est pas encore confirmé. Réessayez dans un instant.',
+        retry: 'finalize',
+      };
+    if (error.code === 'SessionExpired')
+      return {
+        message: 'La session a expiré. Recommencez la livraison depuis le code client.',
+        retry: 'none',
+      };
+    if (error.status >= 500)
+      return {
+        message: 'Service indisponible. Réessayez dans un instant.',
+        retry: 'finalize',
+      };
+    return {
+      message: 'Impossible de terminer la livraison pour le moment.',
+      retry: 'none',
+    };
   }
   return { message: 'Une erreur est survenue. Réessayez.', retry: 'payment' };
 }
@@ -67,17 +114,23 @@ const PHASE_TEXT: Record<Phase, string> = {
   collecting: 'Présentez la carte du client sur le lecteur.',
   finalizing: 'Validation du paiement…',
   done: 'Livraison terminée',
-  error: ''
+  error: '',
 };
 
 export default function DeliveryPaymentScreen() {
   const router = useRouter();
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, publicReference } = useLocalSearchParams<{
+    id: string;
+    publicReference: string;
+  }>();
   const [phase, setPhase] = useState<Phase>('loading');
   const [failure, setFailure] = useState<Failure | null>(null);
   const [progress, setProgress] = useState<number | null>(null);
   const [amountCents, setAmountCents] = useState<number | null>(null);
-  const sessionRef = useRef<{ sessionId: string; payment: CompletionPayment } | null>(null);
+  const sessionRef = useRef<{
+    sessionId: string;
+    payment: CompletionPayment;
+  } | null>(null);
   const runningRef = useRef(false);
 
   const reader = useReaderAdapter(resolveReaderFamily(), (status) => {
@@ -103,7 +156,8 @@ export default function DeliveryPaymentScreen() {
 
   const collectAndFinalize = useCallback(async () => {
     const current = sessionRef.current;
-    if (current === null || current.payment.paymentIntentClientSecret === null) throw new Error('paiement indisponible');
+    if (current === null || current.payment.paymentIntentClientSecret === null)
+      throw new Error('paiement indisponible');
     setPhase('collecting');
     await reader.collectAndConfirm(current.payment.paymentIntentClientSecret);
     await finalize();
@@ -133,12 +187,18 @@ export default function DeliveryPaymentScreen() {
           if (state.session === null || state.payment === null) {
             throw new ApiError(409, 'session', undefined, 'SessionExpired');
           }
-          sessionRef.current = { sessionId: state.session.id, payment: state.payment };
+          sessionRef.current = {
+            sessionId: state.session.id,
+            payment: state.payment,
+          };
           setAmountCents(state.payment.amountCents);
           if (state.nextAction === 'finalize') return await finalize();
           if (state.nextAction === 'retry_payment') {
             const retried = await api.retryCompletionPayment(id, state.session.id);
-            sessionRef.current = { sessionId: state.session.id, payment: retried.payment };
+            sessionRef.current = {
+              sessionId: state.session.id,
+              payment: retried.payment,
+            };
           }
           await connectThenCollect();
         } else if (step === 'connect') {
@@ -148,7 +208,10 @@ export default function DeliveryPaymentScreen() {
           const current = sessionRef.current;
           if (current === null) throw new ApiError(409, 'session', undefined, 'SessionExpired');
           const retried = await api.retryCompletionPayment(id, current.sessionId);
-          sessionRef.current = { sessionId: current.sessionId, payment: retried.payment };
+          sessionRef.current = {
+            sessionId: current.sessionId,
+            payment: retried.payment,
+          };
           await collectAndFinalize();
         } else if (step === 'finalize') {
           await finalize();
@@ -161,7 +224,7 @@ export default function DeliveryPaymentScreen() {
         runningRef.current = false;
       }
     },
-    [collectAndFinalize, connectThenCollect, finalize, finish, id]
+    [collectAndFinalize, connectThenCollect, finalize, finish, id],
   );
 
   useEffect(() => {
@@ -185,8 +248,11 @@ export default function DeliveryPaymentScreen() {
   return (
     <SafeAreaView className="flex-1 bg-background">
       <View className="flex-row items-center justify-between px-page-mobile py-3">
-        <Text className="font-sans text-body-lg text-stone-400">#{id.slice(-6)}</Text>
-        <Pressable onPress={handleClose} className="h-touch-comfortable w-touch-comfortable items-center justify-center">
+        <Text className="font-sans text-body-lg text-stone-400">#{publicReference}</Text>
+        <Pressable
+          onPress={handleClose}
+          className="h-touch-comfortable w-touch-comfortable items-center justify-center"
+        >
           <X size={24} color="#57534E" />
         </Pressable>
       </View>
@@ -194,23 +260,31 @@ export default function DeliveryPaymentScreen() {
       <View className="flex-1 items-center justify-center px-page-mobile">
         <CreditCard size={48} color="#57534E" />
         {amountCents !== null && (
-          <Text className="mt-3 font-sans-bold text-h1 text-stone-800">{formatPriceEuros(amountCents)}</Text>
+          <Text className="mt-3 font-sans-bold text-h1 text-stone-800">
+            {formatPriceEuros(amountCents)}
+          </Text>
         )}
         <Text className="mt-1 font-sans text-body-lg text-stone-500">Paiement à la livraison</Text>
 
         {phase !== 'error' && (
           <View className="mt-8 items-center">
             {phase !== 'done' && <ActivityIndicator size="large" color="#059669" />}
-            <Text className="mt-4 text-center font-sans-semibold text-h3 text-stone-800">{PHASE_TEXT[phase]}</Text>
+            <Text className="mt-4 text-center font-sans-semibold text-h3 text-stone-800">
+              {PHASE_TEXT[phase]}
+            </Text>
             {phase === 'updating' && progress !== null && (
-              <Text className="mt-2 font-sans text-body-lg text-stone-600">{Math.round(progress * 100)} %</Text>
+              <Text className="mt-2 font-sans text-body-lg text-stone-600">
+                {Math.round(progress * 100)} %
+              </Text>
             )}
           </View>
         )}
 
         {phase === 'error' && failure !== null && (
           <View className="mt-8 w-full items-center">
-            <Text className="text-center font-sans-semibold text-h3 text-red-700">{failure.message}</Text>
+            <Text className="text-center font-sans-semibold text-h3 text-red-700">
+              {failure.message}
+            </Text>
             {failure.retry !== 'none' && (
               <Pressable
                 onPress={() => void run(failure.retry)}

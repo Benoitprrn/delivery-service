@@ -92,3 +92,83 @@ avant Phase 3 — Phase 1 et 2 valident le flux via pages HTML (`apps/web/public
   production). Dates converties en Europe/Paris CÔTÉ CLIENT ; la fin d'une période est exclusive (le dernier jour affiché est la veille).
 - Pages de retour du lien hébergé : `WEB_APP_URL/driver/payout-account/{return,refresh}` (à fournir côté web ; le composant intégré n'en a
   pas besoin).
+
+## Identités légales et documents (Étape 3, `docs/work/invoicing-preparation-plan.md` §5)
+
+- `app/(tabs)/compte/mon-compte.tsx` restructuré en 3 sections : Informations personnelles
+  (prénom/nom/téléphone éditables + e-mail lecture seule, source `GET/PATCH
+  /api/v1/drivers/me` — plus jamais `user_metadata`, source de vérité unique), Informations
+  professionnelles (`GET/PATCH /api/v1/drivers/me/legal-information`), Documents (pièce
+  d'identité + justificatif d'entreprise générique, `GET/POST/DELETE
+  /api/v1/drivers/me/documents...`). Badge « Non vérifié » et champ date de naissance
+  (fictifs, sans backend) supprimés.
+- Sélection de fichier : `expo-document-picker` (accepte PDF/JPEG/PNG — un Kbis/RCS est
+  souvent un PDF, `expo-image-picker` seul ne l'aurait pas permis), upload multipart via
+  `lib/api.ts` → `uploadMultipart()`.
+
+## Modèle économique livraison/frais de service (SF11, ADR 0005, 2026-09-23)
+
+- Le livreur ne voit jamais que son propre gain (`deliveryCents`, plein montant, jamais un net après commission) :
+  `app/order/[id]/index.tsx` et `components/order-card.tsx` affichent `order.deliveryCents ?? order.priceCents`
+  (repli pour une commande antérieure à SF5, où `deliveryCents` est `null`). `serviceFeeCents` (part Locadely)
+  n'est ni lu ni affiché côté livreur — les vues `DriverStatementView`/`DriverPeriodView` de l'API ne l'exposent
+  d'ailleurs pas. Le bloc paiement à la livraison (`order.cashOnDelivery.amountCents`, Stripe Terminal Direct
+  Charge, ADR 0003) est un flux séparé (encaissement client) et reste le montant total — ne pas confondre avec
+  le gain du livreur.
+- « Cette semaine » a maintenant UNE seule source : `api.getMySettlements()` → `currentWeek` (champ
+  `estimatedAmountCents`, renommé depuis `estimatedNetCents` — même calcul, somme des `deliveryCents`, juste un
+  nom qui ne suggère plus une soustraction). La carte Wallet de `app/(tabs)/compte/index.tsx` et l'écran
+  `app/(tabs)/compte/wallet.tsx` lisent désormais la même valeur (avant SF11, la carte utilisait un calcul
+  local indépendant sans filtre `go_live_at`, pouvant diverger de l'écran détaillé). `currentWeek === null`
+  (pas de `go_live_at` posé, ou aucune course) affiche un tiret sur la carte plutôt qu'un montant erroné.
+  `lib/earnings.ts`, `components/earning-row.tsx`, `lib/wallet-types.ts` et `api.getMyEarnings()` sont supprimés
+  (code mort après cette unification) ; l'endpoint backend `GET /api/v1/orders/driver/earnings` reste en place,
+  simplement plus appelé par l'app.
+
+## Mandat de facturation électronique (Étape 5 Tranche 4c, `docs/work/invoicing-preparation-plan.md` §15.20)
+
+- Écran `app/mandat/index.tsx`, point d'entrée : nouvelle carte « Mandat de facturation » dans
+  `app/(tabs)/compte/index.tsx` (jamais sur Carte — le mandat ne bloque que la transmission des
+  factures Super PDP, jamais le dispatch, ADR 0007 §2). Machine à états locale
+  (`loading|error|status|read|name|signing`) — jamais de source de vérité locale durable :
+  `useFocusEffect` relit toujours `api.getMandateStatus()` à l'entrée sur l'écran, y compris après
+  signature ou après une fermeture d'app en cours de route. Aucun appel Super PDP direct depuis le
+  mobile (uniquement `getMandateStatus`/`acceptMandate`/`getMandatePdfUrl`, `lib/api.ts`).
+- `lib/mandate-status.ts` → `deriveMandateUi` (pur, même patron que `derivePayoutUi`/
+  `lib/payout-status.ts`) : statuts sans jargon (jamais `not_verified`/`provider_mandate_id` à
+  l'écran), fail-closed sur un état non reconnu, bandeau de dérive légale (`drift`) toujours
+  secondaire et jamais bloquant, `unknown_outcome`/`failed` → « Action requise » sans bouton de
+  relance (aucune interface de relance manuelle construite pour ce flux, cohérent avec le reste du
+  chantier règlement).
+- `components/mandate-signature-pad.tsx` : copie DÉDIÉE de `components/proof-signature.tsx`
+  (texte/comportement propres à ce mandat), même `react-native-signature-canvas` déjà installée —
+  zéro nouvelle dépendance de signature.
+- Aperçu avant signature (`status.previewText`) : texte déjà substitué renvoyé par le backend
+  (gabarit réel + données prérequises du livreur), jamais reconstruit côté client à partir de
+  fragments séparés — garantit que ce qui est lu est exactement ce qui sera signé. Une fois un
+  mandat signé, l'aperçu redevient `null` côté backend : l'app affiche alors seulement le bouton
+  « Voir le mandat signé » (`lib/open-external.ts` → `openMandatePdf`, navigateur système, jamais
+  une WebView), jamais une reconstruction depuis des données live potentiellement différentes.
+- Tests : `apps/mobile` n'a AUCUNE infrastructure de test de composant React Native (zéro fichier
+  avant cette tranche, aucun `jest`/`testing-library`) — décision assumée de ne pas en créer une
+  pour ce seul écran. `vitest` ajouté (devDependency, `vitest.config.mts`, script `test`)
+  UNIQUEMENT pour la logique pure sans dépendance React Native : `lib/mandate-status.test.ts` (15
+  tests, tous les états de `deriveMandateUi`). Le dessin/effacement de la signature, l'ouverture/
+  fermeture d'écran et la reprise après fermeture d'app ne sont couverts par aucun test automatisé
+  (comme le reste de l'app) — vérifiés par relecture attentive et par un rendu PDF réel de bout en
+  bout côté backend.
+
+## Documents de facturation (Étape 4, `docs/work/invoicing-preparation-plan.md` §8, enrichi Étape 5 Tranche 5 révisée §16)
+
+`app/order/[id]/index.tsx` affiche, pour une commande `COMPLETED` uniquement
+(`api.getOrderDocuments`), toutes ses propres factures (`DriverOrderDocuments`, type contraint à
+`issuerKind: 'driver'`/`invoiceTypeCode: '389'`) et ses avoirs éventuels (avec la référence de la
+facture d'origine, `originalInvoiceNumber` — jamais un UUID interne) — jamais le montant ni
+l'existence de la facture Locadely (le serveur ne l'expose de toute façon jamais à un livreur).
+`lib/document-status.ts` → `documentStatusLabel` traduit les deux axes de statut backend
+(`transmissionStatus` figé + `submissionStatus` travail worker) en un libellé sans jargon —
+corrige un vrai gap trouvé en revue (l'écran affichait auparavant le statut technique brut
+`confirmed`/`rejected` tel quel dès qu'il différait de `not_submitted`). Bouton « Voir » par
+document quand `facturXAvailable` (`api.getInvoiceDocumentFacturXUrl` → URL signée courte durée,
+ouverte via `Linking.openURL`, jamais une WebView), erreur `409` traduite explicitement (« pas
+encore prêt »).

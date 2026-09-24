@@ -50,10 +50,11 @@ async function order(merchant: string, driver: string, earning: 401 | 475 | 909,
     `insert into orders(id,merchant_id,driver_id,zone_id,status,customer_name,customer_phone,pickup_address,pickup_lat,pickup_lng,delivery_address,delivery_lat,delivery_lng,distance_m,duration_s,driver_earning_cents,created_at,completed_at)
      values($1::uuid,$2::uuid,$3::uuid,$4::uuid,'COMPLETED','Client','0600000000','Pickup',46.2,5.2,'Delivery',46.21,5.21,$5::int,$6::int,$7::int,'2026-08-24 08:00:00+00',$8::timestamptz)`,
     [id, merchant, driver, zoneId, shape[0], shape[1], earning, completedAt])
+  await pool.query('update orders set delivery_cents=$2, service_fee_cents=$3 where id=$1::uuid', [id, earning, Math.floor((earning * 2_000) / 10_000)])
   orderIds.push(id)
 }
 
-/** Restaurant 1 : 475 + 909 = 1384 c (deux livreurs) ; restaurant 2 : 401 c. Tout est clôturé le lundi 31/08 puis pré-notifié pour le mercredi 02/09. */
+/** Restaurant 1 : 475 + 95 + 909 + 181 = 1660 c ; restaurant 2 : 401 + 80 = 481 c. */
 async function closeAndNotify(opts: { notify?: boolean; notifyAt?: Date; mandates?: Record<string, string> } = {}): Promise<void> {
   await setGoLive('2026-08-15T00:00:00Z')
   await order(merchant1, driver1, 475, '2026-08-25 10:00:00+00')
@@ -104,7 +105,7 @@ describe.skipIf(!isolated)('SEPA debit execution on PostgreSQL (R50)', () => {
     await closeAndNotify()
     // Un règlement à 0 € « notifié » dans une période vide : jamais débité.
     const emptyPeriod = (await pool.query<{ id: string }>("select id from settlement_periods where period_start = '2026-08-16T22:00:00Z'")).rows[0]!.id
-    await pool.query("insert into merchant_settlements(period_id, merchant_id, amount_cents, status) values($1::uuid, $2::uuid, 0, 'notified')", [emptyPeriod, merchant1])
+    await pool.query("insert into merchant_settlements(period_id, merchant_id, amount_cents, driver_amount_cents, service_fee_cents, status) values($1::uuid, $2::uuid, 0, 0, 0, 'notified')", [emptyPeriod, merchant1])
     const provider = new FakeProvider()
     const run = runner(provider, new FakeSources())
 
@@ -114,7 +115,7 @@ describe.skipIf(!isolated)('SEPA debit execution on PostgreSQL (R50)', () => {
 
     await expect(run.execute({ now: DEBIT_DAY })).resolves.toMatchObject({ due: 2, created: 2, errors: 0 })
     const frozen = await settlements()
-    expect(provider.calls.map((c) => [c.metadata.merchant_id, c.amountCents]).sort()).toEqual([[merchant1, 1384], [merchant2, 401]])
+    expect(provider.calls.map((c) => [c.metadata.merchant_id, c.amountCents]).sort()).toEqual([[merchant1, 1660], [merchant2, 481]])
     for (const call of provider.calls) {
       const settlement = frozen.find((s) => s.merchant_id === call.metadata.merchant_id)!
       expect(call.amountCents).toBe(settlement.amount) // montant = règlement figé
@@ -123,8 +124,8 @@ describe.skipIf(!isolated)('SEPA debit execution on PostgreSQL (R50)', () => {
       expect(call.transferGroup).toBe(`settlement:${settlement.id}`)
     }
     expect(await attempts()).toMatchObject([
-      { merchant_id: merchant1, status: 'processing', attempt_no: 1, amount: 1384, stripe_payment_method_id: 'pm_fake_1', stripe_mandate_id: 'mandate_fake_1', mandate_reference: 'MANDATE-1', linked: true, settlement_status: 'debit_processing' },
-      { merchant_id: merchant2, status: 'processing', amount: 401, mandate_reference: 'MANDATE-2', linked: true, settlement_status: 'debit_processing' }
+      { merchant_id: merchant1, status: 'processing', attempt_no: 1, amount: 1660, stripe_payment_method_id: 'pm_fake_1', stripe_mandate_id: 'mandate_fake_1', mandate_reference: 'MANDATE-1', linked: true, settlement_status: 'debit_processing' },
+      { merchant_id: merchant2, status: 'processing', amount: 481, mandate_reference: 'MANDATE-2', linked: true, settlement_status: 'debit_processing' }
     ])
     expect((await attempts()).every((a) => typeof a.stripe_payment_intent_id === 'string' && typeof a.stripe_charge_id === 'string')).toBe(true)
     expect(await statementStatuses(merchant1)).toEqual(['waiting_sepa', 'waiting_sepa'])
@@ -312,4 +313,3 @@ async function closeAndNotifyAgainWithRealClock(): Promise<void> {
     read: async (merchantId) => ({ email: 'resto@example.test', legalName: 'Resto', activeSepaMethod: { last4: '4242', mandateReference: `MANDATE-${merchantId.slice(-1)}` } })
   }, sender, { creditorId: 'CREDITOR-TEST', supportEmail: 'support@example.test' }, silent).execute({ now: new Date() })
 }
-

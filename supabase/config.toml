@@ -114,7 +114,12 @@ port = 54324
 # sender_name = "Admin"
 
 [storage]
-# Désactivé — pas de photos/OCR en Phase 1 (arrive Phase 3).
+# Désactivé ici volontairement : l'API n'utilise jamais le Storage local de ce stack CLI.
+# SUPABASE_URL (.env) pointe le projet Supabase HÉBERGÉ (Auth + Storage réels) ; seul Postgres
+# tourne en local (port 54322) pour ce dépôt. Les buckets (merchant-logos, account-documents)
+# vivent sur le projet hébergé, créés/gérés via l'API Storage HTTP (clé service role), jamais
+# via ce fichier de config local — l'activer ici ne créerait rien sur le projet réellement
+# utilisé. Voir apps/api/CLAUDE.md « Supabase Storage ».
 enabled = false
 # The maximum file size allowed (e.g. "5MB", "500KB").
 file_size_limit = "50MiB"

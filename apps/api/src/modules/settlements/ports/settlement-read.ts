@@ -28,6 +28,10 @@ export type MerchantSettlementRow = {
   periodStart: Date
   periodEnd: Date
   amountCents: number
+  /** `merchant_settlements.driver_amount_cents` (ADR 0005) — part due aux livreurs, jamais soustraite. */
+  deliveryCents: number
+  /** `merchant_settlements.service_fee_cents` (ADR 0005) — part Locadely, additive. `amountCents = deliveryCents + serviceFeeCents`. */
+  serviceFeeCents: number
   deliveriesCount: number
   /** `merchant_settlements.status`. */
   status: string
@@ -39,7 +43,7 @@ export type MerchantSettlementRow = {
   /** Une pré-notification de relance existe pour une tentative pas encore créée. */
   retryRequested: boolean
 }
-export type MerchantSettlementLineRow = { orderId: string; finalizedAt: Date; finalStatus: 'COMPLETED' | 'RETURNED'; merchantAmountCents: number }
+export type MerchantSettlementLineRow = { orderId: string; finalizedAt: Date; finalStatus: 'COMPLETED' | 'RETURNED'; merchantAmountCents: number; deliveryCents: number; serviceFeeCents: number }
 
 export type AdminSettlementRow = {
   merchantSettlementId: string

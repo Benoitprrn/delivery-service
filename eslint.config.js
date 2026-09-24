@@ -26,5 +26,12 @@ export default tseslint.config(
     rules: {
       '@typescript-eslint/no-require-imports': 'off'
     }
+  },
+  {
+    // Scripts Node exécutés directement (jamais par le bundler Expo/Metro) — besoin des globals Node standard.
+    files: ['apps/mobile/scripts/**/*.mjs'],
+    languageOptions: {
+      globals: { process: 'readonly', console: 'readonly' }
+    }
   }
 )

@@ -1,5 +1,5 @@
 import Stripe from 'stripe'
-import type { StripeDebitSnapshot, StripeTransferSnapshot } from '../domain/reconciliation.js'
+import type { StripeDebitSnapshot, StripeRefundSnapshot, StripeTransferSnapshot } from '../domain/reconciliation.js'
 import type { ReconciliationStripeReader } from '../ports/settlement-ops.js'
 
 const missing = (error: unknown): boolean => error instanceof Stripe.errors.StripeInvalidRequestError && error.code === 'resource_missing'
@@ -36,6 +36,13 @@ export class StripeReconciliationReader implements ReconciliationStripeReader {
       if (missing(error)) return null
       throw error
     }
+  }
+
+  public async readRefund(refundId: string): Promise<StripeRefundSnapshot | null> {
+    try {
+      const refund = await this.stripe.refunds.retrieve(refundId)
+      return { refundId: refund.id, chargeId: typeof refund.charge === 'string' ? refund.charge : refund.charge?.id ?? '', amountCents: refund.amount, currency: refund.currency, status: refund.status ?? 'unknown' }
+    } catch (error) { if (missing(error)) return null; throw error }
   }
 
   public async readTransferOrigin(transferId: string): Promise<{ transferId: string; amountCents: number; driverTransferIdMetadata: string | null } | null> {

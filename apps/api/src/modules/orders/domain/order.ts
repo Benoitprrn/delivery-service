@@ -17,6 +17,7 @@ export type MerchantProofAsset = {
 
 export type Order = {
   id: string
+  publicReference: string
   merchantId: string
   driverId: string | null
   zoneId: string
@@ -38,6 +39,10 @@ export type Order = {
   distanceM: number
   durationS: number
   priceCents: number
+  /** Montant dû au livreur (SF5/ADR 0005) — égal à `priceCents` pour une commande standard. Nul pour une commande antérieure à SF5. */
+  deliveryCents: number | null
+  /** Frais de service Locadely, additif, jamais soustrait de `deliveryCents` (ADR 0005). Nul pour une commande antérieure à SF5. */
+  serviceFeeCents: number | null
   cashOnDelivery: OrderCashOnDelivery
   deliveryProofMethod: DeliveryProofMethod | null
   assignedAt: Date | null

@@ -9,8 +9,6 @@ export interface SettleableOrdersReader {
 
 export type SettlementSettings = {
   goLiveAt: Date | null
-  feeRateBps: number
-  feeRuleVersion: number
   payrunDelayBusinessDays: number
   promiseBusinessDays: number
 }
@@ -22,8 +20,6 @@ export type ClosePeriodInput = {
   payrunAtUtc: Date
   promiseDeadline: LocalDate
   excludedOrdersCount: number
-  feeRateBps: number
-  feeRuleVersion: number
   ledger: PeriodLedger
 }
 

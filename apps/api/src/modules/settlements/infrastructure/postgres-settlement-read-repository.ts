@@ -47,19 +47,19 @@ export class PostgresSettlementReadRepository implements SettlementReadRepositor
   }
 
   public async listMerchantSettlements(merchantId: string, limit: number): Promise<MerchantSettlementRow[]> {
-    const base = await this.pool.query<{ id: string; period_start: Date; period_end: Date; amount: string; status: string; deliveries: string }>(
-      `select ms.id, sp.period_start, sp.period_end, ms.amount_cents::text as amount, ms.status,
+    const base = await this.pool.query<{ id: string; period_start: Date; period_end: Date; amount: string; delivery: string; service_fee: string; status: string; deliveries: string }>(
+      `select ms.id, sp.period_start, sp.period_end, ms.amount_cents::text as amount, ms.driver_amount_cents::text as delivery, ms.service_fee_cents::text as service_fee, ms.status,
               (select count(*) from settlement_lines l join settlement_statements s on s.id = l.statement_id where s.merchant_settlement_id = ms.id)::text as deliveries
          from merchant_settlements ms join settlement_periods sp on sp.id = ms.period_id
         where ms.merchant_id = $1::uuid order by sp.period_start desc limit $2`,
       [merchantId, limit]
     )
-    return this.enrichMerchantRows(base.rows.map((r) => ({ id: r.id, periodStart: r.period_start, periodEnd: r.period_end, amount: num(r.amount), status: r.status, deliveries: num(r.deliveries) })))
+    return this.enrichMerchantRows(base.rows.map((r) => ({ id: r.id, periodStart: r.period_start, periodEnd: r.period_end, amount: num(r.amount), deliveryCents: num(r.delivery), serviceFeeCents: num(r.service_fee), status: r.status, deliveries: num(r.deliveries) })))
   }
 
   public async getMerchantSettlement(merchantId: string, merchantSettlementId: string): Promise<{ row: MerchantSettlementRow; lines: MerchantSettlementLineRow[] } | null> {
-    const base = await this.pool.query<{ id: string; period_start: Date; period_end: Date; amount: string; status: string; deliveries: string }>(
-      `select ms.id, sp.period_start, sp.period_end, ms.amount_cents::text as amount, ms.status,
+    const base = await this.pool.query<{ id: string; period_start: Date; period_end: Date; amount: string; delivery: string; service_fee: string; status: string; deliveries: string }>(
+      `select ms.id, sp.period_start, sp.period_end, ms.amount_cents::text as amount, ms.driver_amount_cents::text as delivery, ms.service_fee_cents::text as service_fee, ms.status,
               (select count(*) from settlement_lines l join settlement_statements s on s.id = l.statement_id where s.merchant_settlement_id = ms.id)::text as deliveries
          from merchant_settlements ms join settlement_periods sp on sp.id = ms.period_id
         where ms.merchant_id = $1::uuid and ms.id = $2::uuid`,
@@ -67,16 +67,16 @@ export class PostgresSettlementReadRepository implements SettlementReadRepositor
     )
     const first = base.rows[0]
     if (first === undefined) return null
-    const [row] = await this.enrichMerchantRows([{ id: first.id, periodStart: first.period_start, periodEnd: first.period_end, amount: num(first.amount), status: first.status, deliveries: num(first.deliveries) }])
-    const lines = await this.pool.query<{ order_id: string; finalized_at: Date; final_status: 'COMPLETED' | 'RETURNED'; merchant_amount_cents: string }>(
-      `select l.order_id, l.finalized_at, l.final_status, l.merchant_amount_cents::text as merchant_amount_cents
+    const [row] = await this.enrichMerchantRows([{ id: first.id, periodStart: first.period_start, periodEnd: first.period_end, amount: num(first.amount), deliveryCents: num(first.delivery), serviceFeeCents: num(first.service_fee), status: first.status, deliveries: num(first.deliveries) }])
+    const lines = await this.pool.query<{ order_id: string; finalized_at: Date; final_status: 'COMPLETED' | 'RETURNED'; merchant_amount_cents: string; delivery_cents: string; service_fee_cents: string }>(
+      `select l.order_id, l.finalized_at, l.final_status, l.merchant_amount_cents::text as merchant_amount_cents, l.delivery_cents::text as delivery_cents, l.service_fee_cents::text as service_fee_cents
          from settlement_lines l join settlement_statements s on s.id = l.statement_id where s.merchant_settlement_id = $1::uuid order by l.finalized_at, l.order_id`,
       [merchantSettlementId]
     )
-    return { row: row!, lines: lines.rows.map((l) => ({ orderId: l.order_id, finalizedAt: l.finalized_at, finalStatus: l.final_status, merchantAmountCents: num(l.merchant_amount_cents) })) }
+    return { row: row!, lines: lines.rows.map((l) => ({ orderId: l.order_id, finalizedAt: l.finalized_at, finalStatus: l.final_status, merchantAmountCents: num(l.merchant_amount_cents), deliveryCents: num(l.delivery_cents), serviceFeeCents: num(l.service_fee_cents) })) }
   }
 
-  private async enrichMerchantRows(base: Array<{ id: string; periodStart: Date; periodEnd: Date; amount: number; status: string; deliveries: number }>): Promise<MerchantSettlementRow[]> {
+  private async enrichMerchantRows(base: Array<{ id: string; periodStart: Date; periodEnd: Date; amount: number; deliveryCents: number; serviceFeeCents: number; status: string; deliveries: number }>): Promise<MerchantSettlementRow[]> {
     if (base.length === 0) return []
     const ids = base.map((b) => b.id)
     const [notifications, attempts, incidents, receivables, retries] = await Promise.all([
@@ -96,7 +96,7 @@ export class PostgresSettlementReadRepository implements SettlementReadRepositor
     return base.map((b) => {
       const n = notifications.rows.find((r) => r.merchant_settlement_id === b.id)
       return {
-        merchantSettlementId: b.id, periodStart: b.periodStart, periodEnd: b.periodEnd, amountCents: b.amount, deliveriesCount: b.deliveries, status: b.status,
+        merchantSettlementId: b.id, periodStart: b.periodStart, periodEnd: b.periodEnd, amountCents: b.amount, deliveryCents: b.deliveryCents, serviceFeeCents: b.serviceFeeCents, deliveriesCount: b.deliveries, status: b.status,
         preNotification: n === undefined ? null : { attemptNo: n.attempt_no, status: n.status, sentAt: n.sent_at, debitDate: n.debit_date, ibanLast4: n.iban_last4, mandateReference: n.mandate_reference },
         attempts: attempts.rows.filter((r) => r.merchant_settlement_id === b.id).map((r) => ({ attemptNo: r.attempt_no, status: r.status, createdAt: r.created_at, updatedAt: r.updated_at })),
         incidents: incidents.rows.filter((r) => r.merchant_settlement_id === b.id).map((r) => ({ kind: r.kind, amountCents: num(r.amount), status: r.status })),

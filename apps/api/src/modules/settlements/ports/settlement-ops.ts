@@ -1,5 +1,5 @@
 import type { ChargeIncidentAssessment, ChargeIncidentView } from '../domain/charge-incident.js'
-import type { DebitAttemptSnapshot, DriverTransferSnapshot, ReconciliationFinding, StripeDebitSnapshot, StripeTransferSnapshot } from '../domain/reconciliation.js'
+import type { DebitAttemptSnapshot, DriverTransferSnapshot, ReconciliationFinding, ServiceRefundSnapshot, StripeDebitSnapshot, StripeRefundSnapshot, StripeTransferSnapshot } from '../domain/reconciliation.js'
 import type { RetryAttemptSummary } from '../domain/debit-retry.js'
 import type { ReducedSettlementEvent } from '../domain/stripe-event-triage.js'
 
@@ -28,6 +28,7 @@ export interface DebitOpsRepository {
   requestSync(attemptId: string, now: Date): Promise<boolean>
   /** UNE transaction : incidents + créances restaurant + statuts des statements non payés. Jamais de reversal livreur (D-A/D-O). */
   applyIncidents(input: { attemptId: string; chargeId: string; assessment: ChargeIncidentAssessment; now: Date }): Promise<{ applied: boolean; owedCents: number }>
+  knownSucceededServiceRefundCents(chargeId: string): Promise<number>
 }
 
 export interface ChargeIncidentReader {
@@ -36,8 +37,9 @@ export interface ChargeIncidentReader {
 }
 
 /* ---------- Réconciliation DB ↔ Stripe ---------- */
-export type DebitReconciliationItem = { db: DebitAttemptSnapshot }
+export type DebitReconciliationItem = { db: DebitAttemptSnapshot; knownServiceRefundCents: number }
 export type TransferReconciliationItem = { db: DriverTransferSnapshot; ledgerReversedCents: number }
+export type ServiceRefundReconciliationItem = { db: ServiceRefundSnapshot }
 export type PayoutObservationInput = { driverId: string; stripeAccountId: string; payoutId: string; amountCents: number; status: string; automatic: boolean; arrivalDate: string | null; livemode: boolean }
 export type ExaminedRef = { refType: ReconciliationFinding['refType']; refId: string }
 
@@ -47,6 +49,7 @@ export interface ReconciliationRepository {
   lastCompletedRunAt(): Promise<Date | null>
   loadDebits(input: { now: Date; sinceDays: number; limit: number }): Promise<DebitReconciliationItem[]>
   loadTransfers(input: { now: Date; sinceDays: number; limit: number }): Promise<TransferReconciliationItem[]>
+  loadServiceRefunds(input: { now: Date; sinceDays: number; limit: number }): Promise<ServiceRefundReconciliationItem[]>
   loadTransferByStripeId(stripeTransferId: string, now: Date): Promise<TransferReconciliationItem | null>
   knownDriverTransferIds(ids: string[]): Promise<Set<string>>
   loadDriverAccounts(): Promise<Array<{ driverId: string; stripeAccountId: string; openReceivablesCents: number; livemode: boolean }>>
@@ -58,6 +61,7 @@ export interface ReconciliationRepository {
 export interface ReconciliationStripeReader {
   readDebit(paymentIntentId: string): Promise<StripeDebitSnapshot | null>
   readTransfer(transferId: string): Promise<StripeTransferSnapshot | null>
+  readRefund(refundId: string): Promise<StripeRefundSnapshot | null>
   readTransferOrigin(transferId: string): Promise<{ transferId: string; amountCents: number; driverTransferIdMetadata: string | null } | null>
   listRecentTransfers(sinceUnixSeconds: number): Promise<Array<{ transferId: string; amountCents: number; driverTransferIdMetadata: string | null }>>
   readDriverBalance(accountId: string): Promise<{ availableCents: number; pendingCents: number } | null>

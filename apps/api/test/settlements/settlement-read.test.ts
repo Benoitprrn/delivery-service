@@ -14,11 +14,11 @@ const repository = { listDriverPeriods: async () => [period], listMerchantSettle
 const clock = () => new Date('2026-09-22T10:00:00.000Z')
 
 describe('current week settlement estimate', () => {
-  it('is null without go-live and filters the driver with per-line fees', async () => {
-    const absent = new OrdersCurrentWeekEstimator(async () => ({ goLiveAt: null, feeRateBps: 2000, feeRuleVersion: 1, payrunDelayBusinessDays: 1, promiseBusinessDays: 1 }), { listSettleableOrders: async () => [], countPreGoLiveFinalizedOrders: async () => 0 })
+  it('is null without go-live and filters the driver using full delivery amounts', async () => {
+    const absent = new OrdersCurrentWeekEstimator(async () => ({ goLiveAt: null, payrunDelayBusinessDays: 1, promiseBusinessDays: 1 }), { listSettleableOrders: async () => [], countPreGoLiveFinalizedOrders: async () => 0 })
     await expect(absent.estimate('d', new Date('2026-09-21T10:00:00Z'))).resolves.toBeNull()
-    const present = new OrdersCurrentWeekEstimator(async () => ({ goLiveAt: new Date('2026-01-01Z'), feeRateBps: 2000, feeRuleVersion: 1, payrunDelayBusinessDays: 1, promiseBusinessDays: 1 }), { listSettleableOrders: async () => [{ orderId: '1', merchantId: 'm', driverId: 'd', driverEarningCents: 101, merchantPriceCents: 200, finalStatus: 'COMPLETED' as const, createdAt: new Date(), finalizedAt: new Date() }, { orderId: '2', merchantId: 'm', driverId: 'other', driverEarningCents: 100, merchantPriceCents: 200, finalStatus: 'COMPLETED' as const, createdAt: new Date(), finalizedAt: new Date() }], countPreGoLiveFinalizedOrders: async () => 0 })
-    await expect(present.estimate('d', new Date('2026-09-21T10:00:00Z'))).resolves.toMatchObject({ deliveries: 1, estimatedNetCents: 81, closesAt: '2026-09-27T22:05:00.000Z' })
+    const present = new OrdersCurrentWeekEstimator(async () => ({ goLiveAt: new Date('2026-01-01Z'), payrunDelayBusinessDays: 1, promiseBusinessDays: 1 }), { listSettleableOrders: async () => [{ orderId: '1', merchantId: 'm', driverId: 'd', deliveryCents: 101, serviceFeeCents: 20, pricingRuleVersion: 1, finalStatus: 'COMPLETED' as const, createdAt: new Date(), finalizedAt: new Date() }, { orderId: '2', merchantId: 'm', driverId: 'other', deliveryCents: 100, serviceFeeCents: 20, pricingRuleVersion: 1, finalStatus: 'COMPLETED' as const, createdAt: new Date(), finalizedAt: new Date() }], countPreGoLiveFinalizedOrders: async () => 0 })
+    await expect(present.estimate('d', new Date('2026-09-21T10:00:00Z'))).resolves.toMatchObject({ deliveries: 1, estimatedAmountCents: 101, closesAt: '2026-09-27T22:05:00.000Z' })
   })
 })
 
@@ -43,10 +43,12 @@ describe('settlement read use cases', () => {
   })
 
   it('keeps merchant views limited to merchant data and returns null for a missing detail', async () => {
-    const settlement = { merchantSettlementId: 'merchant-settlement', periodStart: new Date('2026-09-14T22:00:00.000Z'), periodEnd: new Date('2026-09-21T22:00:00.000Z'), amountCents: 100, deliveriesCount: 1, status: 'failed', preNotification: null, attempts: [{ attemptNo: 2, status: 'failed' as const, createdAt: clock(), updatedAt: clock() }], incidents: [], openReceivablesCents: 100, retryRequested: false }
+    const settlement = { merchantSettlementId: 'merchant-settlement', periodStart: new Date('2026-09-14T22:00:00.000Z'), periodEnd: new Date('2026-09-21T22:00:00.000Z'), amountCents: 100, deliveryCents: 80, serviceFeeCents: 20, deliveriesCount: 1, status: 'failed', preNotification: null, attempts: [{ attemptNo: 2, status: 'failed' as const, createdAt: clock(), updatedAt: clock() }], incidents: [], openReceivablesCents: 100, retryRequested: false }
     const repo = { ...repository, listMerchantSettlements: async () => [settlement], getMerchantSettlement: async () => null }
     const list = await new GetMerchantSettlementsUseCase(repo, clock).execute({ merchantId: 'm1', limit: 1 })
-    expect(JSON.stringify(list)).not.toMatch(/driver|earning|fee|stripe|failureCode/i)
+    // Le restaurant voit sa propre décomposition livraison/service (ADR 0005, SF10) mais jamais l'identité du
+    // livreur, son gain, ni un identifiant Stripe brut.
+    expect(JSON.stringify(list)).not.toMatch(/driverId|driverName|earning|stripe|failureCode/i)
     await expect(new GetMerchantSettlementDetailUseCase(repo, clock).execute({ merchantId: 'm1', merchantSettlementId: 'missing' })).resolves.toBeNull()
   })
 

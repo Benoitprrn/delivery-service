@@ -32,7 +32,7 @@ export class GetDriverSettlementsUseCase {
 function merchantView(row: import('../ports/settlement-read.js').MerchantSettlementRow) {
   const notification = row.preNotification
   const latestAttempt = row.attempts.reduce<typeof row.attempts[number] | null>((latest, attempt) => latest === null || attempt.attemptNo > latest.attemptNo ? attempt : latest, null)
-  return { merchantSettlementId: row.merchantSettlementId, periodStart: row.periodStart.toISOString(), periodEnd: row.periodEnd.toISOString(), amountCents: row.amountCents, deliveriesCount: row.deliveriesCount, displayState: merchantDisplayState(row), debit: { date: notification?.debitDate ?? null, ibanLast4: notification?.ibanLast4 ?? null, mandateReference: notification?.mandateReference ?? null, attemptNo: latestAttempt?.attemptNo ?? null, preNotifiedAt: iso(notification?.sentAt ?? null) }, retryPending: row.retryRequested, incidentOpenCents: incidentOpenCents(row.incidents), openReceivableCents: row.openReceivablesCents }
+  return { merchantSettlementId: row.merchantSettlementId, periodStart: row.periodStart.toISOString(), periodEnd: row.periodEnd.toISOString(), amountCents: row.amountCents, deliveryCents: row.deliveryCents, serviceFeeCents: row.serviceFeeCents, deliveriesCount: row.deliveriesCount, displayState: merchantDisplayState(row), debit: { date: notification?.debitDate ?? null, ibanLast4: notification?.ibanLast4 ?? null, mandateReference: notification?.mandateReference ?? null, attemptNo: latestAttempt?.attemptNo ?? null, preNotifiedAt: iso(notification?.sentAt ?? null) }, retryPending: row.retryRequested, incidentOpenCents: incidentOpenCents(row.incidents), openReceivableCents: row.openReceivablesCents }
 }
 
 export class GetMerchantSettlementsUseCase {
@@ -45,7 +45,7 @@ export class GetMerchantSettlementDetailUseCase {
   public async execute(input: { merchantId: string; merchantSettlementId: string }): Promise<MerchantSettlementDetailResponse | null> {
     const result = await this.repository.getMerchantSettlement(input.merchantId, input.merchantSettlementId)
     if (result === null) return null
-    return { generatedAt: this.clock().toISOString(), settlement: merchantView(result.row), attempts: result.row.attempts.map((attempt) => ({ attemptNo: attempt.attemptNo, outcome: merchantAttemptOutcome(attempt.status), at: attempt.updatedAt.toISOString() })), lines: result.lines.map((line) => ({ orderId: line.orderId, finalizedAt: line.finalizedAt.toISOString(), status: line.finalStatus, amountCents: line.merchantAmountCents })) }
+    return { generatedAt: this.clock().toISOString(), settlement: merchantView(result.row), attempts: result.row.attempts.map((attempt) => ({ attemptNo: attempt.attemptNo, outcome: merchantAttemptOutcome(attempt.status), at: attempt.updatedAt.toISOString() })), lines: result.lines.map((line) => ({ orderId: line.orderId, finalizedAt: line.finalizedAt.toISOString(), status: line.finalStatus, amountCents: line.merchantAmountCents, deliveryCents: line.deliveryCents, serviceFeeCents: line.serviceFeeCents })) }
   }
 }
 

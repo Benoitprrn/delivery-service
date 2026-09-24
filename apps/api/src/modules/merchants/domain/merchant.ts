@@ -9,6 +9,7 @@ export type Merchant = {
   lat: number | null
   lng: number | null
   onboardingCompleted: boolean
+  serviceFeeRateBpsOverride?: number | null
 }
 
 export function isMerchantInformationComplete(merchant: Merchant): boolean {

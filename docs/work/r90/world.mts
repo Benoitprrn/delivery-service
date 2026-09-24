@@ -73,14 +73,14 @@ for (const [dn, rn, earnings] of matrix) {
     const inserted = await pool.query(`insert into orders(id,merchant_id,driver_id,zone_id,status,customer_name,customer_phone,pickup_address,pickup_lat,pickup_lng,delivery_address,delivery_lat,delivery_lng,distance_m,duration_s,driver_earning_cents,created_at,completed_at)
       values(gen_random_uuid(),$1::uuid,$2::uuid,$3::uuid,'COMPLETED','Client R90','0600000000','P',46.2,5.2,'D',46.21,5.21,$4::int,$5::int,0,$6,$7) returning id`,
       [state.restaurants[`R${rn}`].id, state.drivers[`D${dn}`].id, zoneId, 2000 + e * 8, 600 + e, created, completed])
-    await pool.query('update orders set driver_earning_cents = price_cents where id = $1::uuid', [inserted.rows[0].id])
+    await pool.query('update orders set driver_earning_cents = price_cents, delivery_cents = price_cents, service_fee_cents = floor(price_cents * 2000 / 10000) where id = $1::uuid', [inserted.rows[0].id])
     i += 1
   }
 }
 // commande antérieure à go_live_at : doit être exclue et comptée
 await pool.query(`insert into orders(id,merchant_id,driver_id,zone_id,status,customer_name,customer_phone,pickup_address,pickup_lat,pickup_lng,delivery_address,delivery_lat,delivery_lng,distance_m,duration_s,driver_earning_cents,created_at,completed_at)
   values(gen_random_uuid(),$1::uuid,$2::uuid,$3::uuid,'COMPLETED','Client R90','0600000000','P',46.2,5.2,'D',46.21,5.21,3000,600,0,'2026-08-17 08:00:00+00','2026-08-27 10:00:00+00')`, [state.restaurants.R1.id, state.drivers.D1.id, zoneId])
-await pool.query("update orders set driver_earning_cents = price_cents where created_at < '2026-08-20'")
+await pool.query("update orders set driver_earning_cents = price_cents, delivery_cents = price_cents, service_fee_cents = floor(price_cents * 2000 / 10000) where created_at < '2026-08-20'")
 state.orders = { settleable: i, preGoLive: 1 }
 fs.mkdirSync(`${REPO}/docs/work/r90/evidence`, { recursive: true })
 fs.writeFileSync(`${REPO}/docs/work/r90/evidence/state-${RUN_ID}.json`, JSON.stringify(state, null, 1))

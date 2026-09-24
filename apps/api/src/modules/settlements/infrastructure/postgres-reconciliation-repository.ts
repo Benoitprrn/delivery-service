@@ -1,6 +1,6 @@
 import type { Pool } from 'pg'
 import type { ReconciliationFinding } from '../domain/reconciliation.js'
-import type { DebitReconciliationItem, ExaminedRef, PayoutObservationInput, ReconciliationRepository, TransferReconciliationItem } from '../ports/settlement-ops.js'
+import type { DebitReconciliationItem, ExaminedRef, PayoutObservationInput, ReconciliationRepository, ServiceRefundReconciliationItem, TransferReconciliationItem } from '../ports/settlement-ops.js'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -25,12 +25,13 @@ export class PostgresReconciliationRepository implements ReconciliationRepositor
   }
 
   public async loadDebits(input: { now: Date; sinceDays: number; limit: number }): Promise<DebitReconciliationItem[]> {
-    const result = await this.pool.query<{ id: string; status: DebitReconciliationItem['db']['status']; amount: string; pi: string | null; charge: string | null; livemode: boolean; age: string }>(
-      `select a.id, a.status, a.amount_cents::text as amount, a.stripe_payment_intent_id as pi, a.stripe_charge_id as charge, a.livemode, (extract(epoch from ($1::timestamptz - a.created_at)) / 60)::text as age
+    const result = await this.pool.query<{ id: string; status: DebitReconciliationItem['db']['status']; amount: string; pi: string | null; charge: string | null; livemode: boolean; age: string; known_refunds: string }>(
+      `select a.id, a.status, a.amount_cents::text as amount, a.stripe_payment_intent_id as pi, a.stripe_charge_id as charge, a.livemode, (extract(epoch from ($1::timestamptz - a.created_at)) / 60)::text as age,
+              (select coalesce(sum(sr.refund_cents), 0) from driver_reversal_service_refunds sr where sr.debit_attempt_id = a.id and sr.status = 'succeeded')::text as known_refunds
          from debit_attempts a where a.created_at >= $1::timestamptz - make_interval(days => $2) order by a.created_at desc limit $3`,
       [input.now, input.sinceDays, input.limit]
     )
-    return result.rows.map((r) => ({ db: { id: r.id, status: r.status, amountCents: Number(r.amount), paymentIntentId: r.pi, chargeId: r.charge, livemode: r.livemode, ageMinutes: Math.max(0, Math.floor(Number(r.age))) } }))
+    return result.rows.map((r) => ({ db: { id: r.id, status: r.status, amountCents: Number(r.amount), paymentIntentId: r.pi, chargeId: r.charge, livemode: r.livemode, ageMinutes: Math.max(0, Math.floor(Number(r.age))) }, knownServiceRefundCents: Number(r.known_refunds) }))
   }
 
   private async transfers(where: string, params: unknown[]): Promise<TransferReconciliationItem[]> {
@@ -49,6 +50,14 @@ export class PostgresReconciliationRepository implements ReconciliationRepositor
 
   public loadTransfers(input: { now: Date; sinceDays: number; limit: number }): Promise<TransferReconciliationItem[]> {
     return this.transfers('t.created_at >= $1::timestamptz - make_interval(days => $2) order by t.created_at desc limit $3', [input.now, input.sinceDays, input.limit])
+  }
+
+  public async loadServiceRefunds(input: { now: Date; sinceDays: number; limit: number }): Promise<ServiceRefundReconciliationItem[]> {
+    const result = await this.pool.query<{ id: string; status: ServiceRefundReconciliationItem['db']['status']; refund_id: string | null; charge: string; amount: string; livemode: boolean }>(
+      `select id, status, stripe_refund_id as refund_id, stripe_charge_id as charge, refund_cents::text as amount, livemode from driver_reversal_service_refunds
+       where created_at >= $1::timestamptz - make_interval(days => $2) order by created_at desc limit $3`, [input.now, input.sinceDays, input.limit]
+    )
+    return result.rows.map((r) => ({ db: { id: r.id, status: r.status, stripeRefundId: r.refund_id, chargeId: r.charge, refundCents: Number(r.amount), livemode: r.livemode } }))
   }
 
   public async loadTransferByStripeId(stripeTransferId: string, now: Date): Promise<TransferReconciliationItem | null> {

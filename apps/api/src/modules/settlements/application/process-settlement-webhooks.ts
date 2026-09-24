@@ -77,7 +77,8 @@ export class ProcessSettlementWebhooksUseCase {
         this.logger.warn({ eventId: event.id, chargeId: action.chargeId }, 'Charge incident for a charge that is not a Locadely debit: ignored')
         return
       }
-      const result = await this.debits.applyIncidents({ attemptId: attempt.id, chargeId: action.chargeId, assessment: assessChargeIncidents(view), now })
+      const knownServiceRefundCents = await this.debits.knownSucceededServiceRefundCents(action.chargeId)
+      const result = await this.debits.applyIncidents({ attemptId: attempt.id, chargeId: action.chargeId, assessment: assessChargeIncidents(view, knownServiceRefundCents), now })
       if (!result.applied) throw new UnknownSettlementObjectError() // débit pas encore `succeeded` localement : rejoué après le suivi R50
       return
     }

@@ -5,10 +5,12 @@ import fastifyStatic from '@fastify/static'
 import { fileURLToPath } from 'node:url'
 import { join, dirname } from 'node:path'
 import { createMerchantsModule, createSireneProvider, isMerchantLegalInformationComplete, registerMerchantHttpRoutes, SupabaseMerchantLogoStorage } from './modules/merchants/public.js'
-import { createAuthModule, registerAuthHttpRoutes } from './modules/auth/public.js'
+import { createAuthModule } from './modules/auth/public.js'
 import { createDriversModule, registerDriverHttpRoutes } from './modules/drivers/public.js'
-import { createMerchantSettlementReadiness, createOrdersModule, registerOrderHttpRoutes, type DriverEligibility, type MerchantSettlementReadinessReader } from './modules/orders/public.js'
-import { DecideDriverReversalUseCase, GetAdminOverviewUseCase, GetDriverSettlementsUseCase, GetMerchantSettlementDetailUseCase, GetMerchantSettlementsUseCase, OrdersCurrentWeekEstimator, PostgresSettlementReadRepository, registerSettlementReadRoutes, RequestDriverReversalUseCase, type SettlementDirectory, CloseSettlementPeriodUseCase, DriverPayoutAccountUseCases, PostgresDebitOpsRepository, PostgresDebitRetryRepository, PostgresReconciliationRepository, PostgresSettlementEventRepository, ProcessSettlementWebhooksUseCase, ReceiveSettlementWebhookUseCase, RequestDebitRetryUseCase, registerSettlementAdminRoutes, RunSettlementReconciliationUseCase, startIntervalWorker, StripeChargeIncidentReader, StripeReconciliationReader, PostgresDriverConnectRepository, ExecuteDriverReversalsUseCase, PostgresDriverPayoutRepository, PostgresDriverReversalRepository, PostgresPreNotificationRepository, PostgresSepaDebitRepository, ProviderDriverAccountLiveReader, RunDriverPayoutsUseCase, startDriverPayoutWorker, startDriverReversalWorker, StripeDriverReversalProvider, StripeDriverTransferProvider, PostgresSettlementCloseRepository, RunSepaDebitsUseCase, startSepaDebitWorker, StripeSepaDebitProvider, ResendEmailSender, SendPreNotificationsUseCase, startSettlementCloseWorker, startSettlementPreNotificationWorker, PostgresDriverPayoutReadinessReader, registerDriverPayoutRoutes, StripeDriverConnectProvider, UnavailableDriverConnectProvider, type DriverConnectProvider } from './modules/settlements/public.js'
+import { createDocumentsModule, registerAccountDocumentHttpRoutes } from './modules/documents/public.js'
+import { createMerchantSettlementReadiness, createOrdersModule, registerOrderHttpRoutes, type DriverEligibility, type DriverInvoiceReadiness, type MerchantSettlementReadinessReader, PostgresDriverInvoiceReadinessReader } from './modules/orders/public.js'
+import { AcceptDriverEInvoiceMandateUseCase, createInvoicesModule, DriverEInvoiceReadiness, GetDriverEInvoiceMandatePdfUrlUseCase, GetDriverEInvoiceMandateStatusUseCase, GetInvoiceDocumentFileUseCase, InvoiceIssuanceDeferredError, PdfLibMandatePdfRenderer, PollEInvoiceEventsUseCase, PollEInvoiceMandatesUseCase, PostgresDriverEInvoiceMandateRepository, PostgresDriverEInvoiceReadinessReader, PostgresEInvoiceDirectoryCacheRepository, PostgresEInvoiceEventsRepository, PostgresEInvoiceMandateWorkRepository, PostgresEInvoiceWorkRepository, PostgresMandateTemplateRepository, PostgresPlatformLegalIdentityReader, RefreshBuyerElectronicAddressUseCase, registerInvoiceHttpRoutes, RunEInvoiceMandateSubmissionsUseCase, RunEInvoiceSubmissionsUseCase, startEInvoiceMandatePollingWorker, startEInvoiceMandateSubmissionWorker, startEInvoicePollingWorker, startEInvoiceSubmissionWorker, SupabaseEInvoiceDocumentStorage, SupabaseEInvoiceMandateStorage, SuperPdpEInvoiceMandateProvider, SuperPdpEInvoiceProvider, SuperPdpFrenchDirectoryProvider, SuperPdpOAuthClient } from './modules/invoices/public.js'
+import { DecideDriverReversalUseCase, GetAdminOverviewUseCase, GetDriverSettlementsUseCase, GetMerchantSettlementDetailUseCase, GetMerchantSettlementsUseCase, OrdersCurrentWeekEstimator, PostgresSettlementReadRepository, registerSettlementReadRoutes, RequestDriverReversalUseCase, type SettlementDirectory, CloseSettlementPeriodUseCase, DriverPayoutAccountUseCases, PostgresDebitOpsRepository, PostgresDebitRetryRepository, PostgresReconciliationRepository, PostgresSettlementEventRepository, ProcessSettlementWebhooksUseCase, ReceiveSettlementWebhookUseCase, RequestDebitRetryUseCase, registerSettlementAdminRoutes, RunSettlementReconciliationUseCase, startIntervalWorker, StripeChargeIncidentReader, StripeReconciliationReader, PostgresDriverConnectRepository, ExecuteDriverReversalsUseCase, PostgresDriverPayoutRepository, PostgresDriverReversalRepository, PostgresPreNotificationRepository, PostgresSepaDebitRepository, ProviderDriverAccountLiveReader, RunDriverPayoutsUseCase, startDriverPayoutWorker, startDriverReversalWorker, StripeDriverReversalProvider, StripeDriverTransferProvider, PostgresSettlementCloseRepository, RunSepaDebitsUseCase, startSepaDebitWorker, StripeSepaDebitProvider, ResendEmailSender, SendPreNotificationsUseCase, startSettlementCloseWorker, startSettlementPreNotificationWorker, PostgresDriverPayoutReadinessReader, registerDriverPayoutRoutes, StripeDriverConnectProvider, UnavailableDriverConnectProvider, type DriverConnectProvider, PostgresServiceRefundRepository, RunServiceRefundsUseCase, startServiceRefundWorker, StripeMerchantServiceRefundProvider } from './modules/settlements/public.js'
 import { createDispatchModule, registerDispatchHttpRoutes } from './modules/dispatch/public.js'
 import { createNotificationsModule } from './modules/notifications/public.js'
 import { createZonesModule } from './modules/zones/public.js'
@@ -31,7 +33,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 
 // `overrides` sert aux tests : injecter un provider Connect fake (aucun réseau Stripe) et, pour les tests HTTP qui créent des
 // commandes sans données de règlement en base, une garde D-D de remplacement (jamais utilisée en production).
-export async function buildApp(overrides: { connectProvider?: ConnectPaymentsProvider; merchantSettlementReadiness?: MerchantSettlementReadinessReader; driverEligibility?: DriverEligibility; driverConnectProvider?: DriverConnectProvider } = {}): Promise<FastifyInstance> {
+export async function buildApp(overrides: { connectProvider?: ConnectPaymentsProvider; merchantSettlementReadiness?: MerchantSettlementReadinessReader; driverEligibility?: DriverEligibility; driverInvoiceReadiness?: DriverInvoiceReadiness; driverConnectProvider?: DriverConnectProvider } = {}): Promise<FastifyInstance> {
   // Fastify instancie son propre logger Pino à partir des options — passer une
   // instance pino déjà construite (loggerInstance) provoque un conflit de type
   // FastifyBaseLogger / pino.Logger sous exactOptionalPropertyTypes.
@@ -45,7 +47,7 @@ export async function buildApp(overrides: { connectProvider?: ConnectPaymentsPro
 
   await app.register(cors, { origin: true })
   await app.register(rateLimit, { max: 100, timeWindow: '1 minute' })
-  await app.register(multipart, { limits: { files: 1, fileSize: 2 * 1024 * 1024 } })
+  await app.register(multipart, { limits: { files: 1, fileSize: 10 * 1024 * 1024 } })
   await app.register(rawBody, { field: 'rawBody', global: false, encoding: 'utf8', runFirst: true })
   await app.register(fastifyStatic, {
     root: join(__dirname, '../../web/public'),
@@ -55,7 +57,9 @@ export async function buildApp(overrides: { connectProvider?: ConnectPaymentsPro
   const geocoding = createGeocodingModule(config.OPENCAGE_API_KEY)
   const zones = createZonesModule(pool)
   const sirene = createSireneProvider(config.INSEE_API_KEY)
-  const merchants = createMerchantsModule(pool, new SupabaseMerchantLogoStorage(config.SUPABASE_URL, config.SUPABASE_SECRET_KEY), auth.admin, geocoding, { findById: zones.findZoneById, findContainingPoint: zones.findContainingPoint }, sirene)
+  let refreshBuyerElectronicAddress: (input: { merchantId: string; siren: string }) => void = () => undefined
+  let electronicInvoicingStatusReader: { getStatus: (merchantId: string) => Promise<'available' | 'unavailable' | 'unknown'> } = { getStatus: async () => 'unknown' }
+  const merchants = createMerchantsModule(pool, new SupabaseMerchantLogoStorage(config.SUPABASE_URL, config.SUPABASE_SECRET_KEY), auth.admin, geocoding, { findById: zones.findZoneById, findContainingPoint: zones.findContainingPoint }, sirene, { onLegalInformationUpdated: (input) => refreshBuyerElectronicAddress(input) }, { getStatus: (merchantId) => electronicInvoicingStatusReader.getStatus(merchantId) })
   let syncDriverPresence: (driverId: string, available: boolean) => Promise<void> | void = () => undefined
   let isDriverAvailable: (driverId: string) => Promise<boolean> = async () => false
   let incrementDriverCapacity: (driverId: string) => Promise<number> = async () => 0
@@ -66,6 +70,7 @@ export async function buildApp(overrides: { connectProvider?: ConnectPaymentsPro
   // Gardes du règlement livreurs (ADR 0004) : liaison tardive, fermée par défaut tant que non câblée.
   let merchantSettlementReady: MerchantSettlementReadinessReader = { check: async () => ({ ready: false, reason: 'sepa_not_configured' }) }
   const driverPayoutReadiness = new PostgresDriverPayoutReadinessReader(pool)
+  const driverInvoiceReadiness = overrides.driverInvoiceReadiness ?? new PostgresDriverInvoiceReadinessReader(pool)
   const orders = createOrdersModule(pool, config.OSRM_URL, geocoding.geocode, {
     isAvailable: (driverId) => isDriverAvailable(driverId)
   }, {
@@ -73,12 +78,60 @@ export async function buildApp(overrides: { connectProvider?: ConnectPaymentsPro
     decrement: async (driverId) => { await decrementDriverCapacity(driverId) }
   }, { isReady: (merchantId) => cardPaymentsReady(merchantId) }, {
     check: (merchantId) => merchantSettlementReady.check(merchantId)
-  }, overrides.driverEligibility ?? { isEligible: (driverId) => driverPayoutReadiness.isReady(driverId) })
+  }, overrides.driverEligibility ?? { isEligible: (driverId) => driverPayoutReadiness.isReady(driverId) }, driverInvoiceReadiness)
+  const invoices = createInvoicesModule(pool, config.SUPERPDP_ELECTRONIC_ADDRESS_SCHEME)
+  electronicInvoicingStatusReader = { getStatus: invoices.getElectronicInvoicingStatus }
+  const superPdpProvider = config.SUPERPDP_ENABLED && config.SUPERPDP_CLIENT_ID !== undefined && config.SUPERPDP_CLIENT_SECRET !== undefined
+    ? new SuperPdpEInvoiceProvider(config.SUPERPDP_API_BASE_URL, new SuperPdpOAuthClient(config.SUPERPDP_API_BASE_URL, config.SUPERPDP_CLIENT_ID, config.SUPERPDP_CLIENT_SECRET))
+    : null
+  const frenchDirectoryProvider = config.SUPERPDP_ENABLED && config.SUPERPDP_CLIENT_ID !== undefined && config.SUPERPDP_CLIENT_SECRET !== undefined
+    ? new SuperPdpFrenchDirectoryProvider(config.SUPERPDP_API_BASE_URL, new SuperPdpOAuthClient(config.SUPERPDP_API_BASE_URL, config.SUPERPDP_CLIENT_ID, config.SUPERPDP_CLIENT_SECRET))
+    : null
+  const mandateProvider = config.SUPERPDP_ENABLED && config.SUPERPDP_CLIENT_ID !== undefined && config.SUPERPDP_CLIENT_SECRET !== undefined
+    ? new SuperPdpEInvoiceMandateProvider(config.SUPERPDP_API_BASE_URL, new SuperPdpOAuthClient(config.SUPERPDP_API_BASE_URL, config.SUPERPDP_CLIENT_ID, config.SUPERPDP_CLIENT_SECRET))
+    : null
+  const buyerDirectoryResolver = frenchDirectoryProvider === null ? null : new RefreshBuyerElectronicAddressUseCase(new PostgresEInvoiceDirectoryCacheRepository(pool), frenchDirectoryProvider)
+  if (buyerDirectoryResolver !== null) refreshBuyerElectronicAddress = (input) => { void buyerDirectoryResolver.refresh(input.merchantId, input.siren, new Date()).catch((error: unknown) => app.log.error({ err: error, merchantId: input.merchantId }, 'einvoice directory refresh failed')) }
+  const stopEInvoiceSubmissionWorker = config.SUPERPDP_SUBMISSION_WORKER_ENABLED && superPdpProvider !== null && buyerDirectoryResolver !== null
+    ? startEInvoiceSubmissionWorker(new RunEInvoiceSubmissionsUseCase(
+      new PostgresEInvoiceWorkRepository(pool),
+      superPdpProvider,
+      new DriverEInvoiceReadiness(new PostgresDriverEInvoiceReadinessReader(pool)),
+      buyerDirectoryResolver,
+      config.SUPERPDP_ELECTRONIC_ADDRESS_SCHEME
+    ), app.log, config.SUPERPDP_SUBMISSION_INTERVAL_SECONDS * 1_000)
+    : () => undefined
+  const stopEInvoicePollingWorker = config.SUPERPDP_POLLING_WORKER_ENABLED && superPdpProvider !== null
+    ? startEInvoicePollingWorker(new PollEInvoiceEventsUseCase(new PostgresEInvoiceEventsRepository(pool), superPdpProvider), app.log, config.SUPERPDP_POLL_INTERVAL_SECONDS * 1_000)
+    : () => undefined
   let emitTrackingPosition: (trackingToken: string, position: { lat: number; lng: number }) => void = () => undefined
   const drivers = createDriversModule(pool, valkey, (driverId, available) => syncDriverPresence(driverId, available), {
     activeOrders: { findActiveTrackingTokensByDriverId: orders.findActiveTrackingTokensByDriverId },
     emitter: { emitTrackingPosition: (trackingToken, position) => emitTrackingPosition(trackingToken, position) }
   })
+  const documents = createDocumentsModule(pool, config.SUPABASE_URL, config.SUPABASE_SECRET_KEY, app.log)
+  const mandateRepository = new PostgresDriverEInvoiceMandateRepository(pool)
+  const mandateTemplateRepository = new PostgresMandateTemplateRepository(pool)
+  const mandateStorage = new SupabaseEInvoiceMandateStorage(config.SUPABASE_URL, config.SUPABASE_SECRET_KEY)
+  const einvoiceDocumentStorage = new SupabaseEInvoiceDocumentStorage(config.SUPABASE_URL, config.SUPABASE_SECRET_KEY)
+  const getInvoiceDocumentFile = new GetInvoiceDocumentFileUseCase(invoices.documentFiles, superPdpProvider, einvoiceDocumentStorage)
+  const mandateWorkRepository = new PostgresEInvoiceMandateWorkRepository(pool)
+  const stopEInvoiceMandateSubmissionWorker = config.SUPERPDP_MANDATE_WORKER_ENABLED && mandateProvider !== null
+    ? startEInvoiceMandateSubmissionWorker(new RunEInvoiceMandateSubmissionsUseCase(mandateWorkRepository, mandateStorage, mandateProvider, { grantorNumberScheme: config.SUPERPDP_MANDATE_GRANTOR_NUMBER_SCHEME }), app.log, config.SUPERPDP_SUBMISSION_INTERVAL_SECONDS * 1_000)
+    : () => undefined
+  const stopEInvoiceMandatePollingWorker = config.SUPERPDP_MANDATE_WORKER_ENABLED && mandateProvider !== null
+    ? startEInvoiceMandatePollingWorker(new PollEInvoiceMandatesUseCase(mandateWorkRepository, mandateProvider, app.log), app.log, config.SUPERPDP_POLL_INTERVAL_SECONDS * 1_000)
+    : () => undefined
+  app.addHook('onClose', () => { stopEInvoiceSubmissionWorker(); stopEInvoicePollingWorker(); stopEInvoiceMandateSubmissionWorker(); stopEInvoiceMandatePollingWorker() })
+  const mandateLegalInformation = { findDriverLegalInformation: async (driverId: string) => {
+    const legal = await drivers.getLegalInformation(driverId)
+    return legal === null ? null : { professionalName: legal.professionalName, siret: legal.siret, siren: legal.siren, legalAddress: legal.legalAddress, vatNumber: legal.vatNumber, vatRegime: legal.vatRegime, legalForm: legal.legalForm }
+  } }
+  const mandateDriverProfile = { findDriverProfile: async (driverId: string) => { const driver = await drivers.findDriverById(driverId); const firstName = driver?.firstName?.trim(); const lastName = driver?.lastName?.trim(); return firstName === undefined || firstName === '' || lastName === undefined || lastName === '' ? null : { firstName, lastName } } }
+  const mandatePlatformIdentity = new PostgresPlatformLegalIdentityReader(pool)
+  const acceptDriverEInvoiceMandate = new AcceptDriverEInvoiceMandateUseCase(mandateRepository, mandateTemplateRepository, new PdfLibMandatePdfRenderer(), mandateStorage, mandateLegalInformation, mandateDriverProfile, mandatePlatformIdentity)
+  const getDriverEInvoiceMandateStatus = new GetDriverEInvoiceMandateStatusUseCase(mandateRepository, mandateLegalInformation, mandateTemplateRepository, mandateDriverProfile, mandatePlatformIdentity)
+  const getDriverEInvoiceMandatePdfUrl = new GetDriverEInvoiceMandatePdfUrlUseCase(mandateRepository, mandateStorage)
   isDriverAvailable = drivers.isAvailable
   incrementDriverCapacity = drivers.incrementCapacity
   decrementDriverCapacity = drivers.decrementCapacity
@@ -93,11 +146,26 @@ export async function buildApp(overrides: { connectProvider?: ConnectPaymentsPro
   })
   syncDriverPresence = realtime.syncDriverPresence
   emitTrackingPosition = realtime.emitTrackingPosition
-  const stopOutboxRelay = startOutboxRelay(pool, createSocketEventEmitter(
+  const socketEmitter = createSocketEventEmitter(
     realtime,
     { startDispatch: dispatch.startDispatch },
     { sendDispatchOfferPush: notifications.sendDispatchOfferPush }
-  ))
+  )
+  const stopOutboxRelay = startOutboxRelay(pool, async (event) => {
+    if (event.eventType === 'order.completed.v1') {
+      const orderId = event.payload.orderId
+      if (typeof orderId !== 'string') return
+      try {
+        const result = await invoices.issueForCompletedOrder(orderId)
+        if (result === 'legacy_or_not_completed') app.log.warn({ orderId }, 'Invoice issuance skipped: order is legacy or not completed')
+        if (result === 'already_issued') app.log.info({ orderId }, 'Invoices already issued; outbox replay is a no-op')
+      } catch (error) {
+        if (error instanceof InvoiceIssuanceDeferredError) app.log.warn({ orderId, reason: error.reason }, 'Invoice issuance deferred until legal information is complete')
+        throw error
+      }
+    }
+    await socketEmitter(event)
+  })
 
   app.addHook('onClose', async () => {
     stopOutboxRelay()
@@ -216,6 +284,10 @@ export async function buildApp(overrides: { connectProvider?: ConnectPaymentsPro
     ? startDriverReversalWorker(new ExecuteDriverReversalsUseCase(new PostgresDriverReversalRepository(pool), new StripeDriverReversalProvider(settlementStripe, stripeLivemode), app.log), app.log)
     : () => undefined
   app.addHook('onClose', () => { stopDriverReversalWorker() })
+  const stopServiceRefundWorker = config.SETTLEMENT_SERVICE_REFUND_WORKER_ENABLED && settlementStripe !== null
+    ? startServiceRefundWorker(new RunServiceRefundsUseCase(new PostgresServiceRefundRepository(pool), new StripeMerchantServiceRefundProvider(settlementStripe, stripeLivemode), app.log), app.log)
+    : () => undefined
+  app.addHook('onClose', () => { stopServiceRefundWorker() })
   // Incidents / webhooks / réconciliation (R70) : le webhook plateforme n'est qu'un déclencheur (journal sans payload) ; l'état vient toujours d'une relecture Stripe.
   const reconciliation = settlementStripe === null ? null : new RunSettlementReconciliationUseCase(new PostgresReconciliationRepository(pool), new StripeReconciliationReader(settlementStripe), app.log)
   if (config.SETTLEMENT_WEBHOOK_WORKER_ENABLED && settlementStripe !== null && reconciliation !== null) {
@@ -262,9 +334,10 @@ export async function buildApp(overrides: { connectProvider?: ConnectPaymentsPro
   })
   // Opération admin minimale : relance MANUELLE d'un prélèvement restaurant échoué (ouvre une nouvelle pré-notification, ne débite rien).
   await app.register(registerSettlementAdminRoutes, { requestDebitRetry: new RequestDebitRetryUseCase(new PostgresDebitRetryRepository(pool)) })
-  await app.register(registerAuthHttpRoutes, { merchants })
   await app.register(registerDriverHttpRoutes, { drivers })
+  await app.register(registerAccountDocumentHttpRoutes, { documents })
   await app.register(registerOrderHttpRoutes, { orders, findMerchantById, findZoneById, findDriverById })
+  await app.register(registerInvoiceHttpRoutes, { getOrderDocuments: invoices.getOrderDocuments, getInvoiceDocumentFile: getInvoiceDocumentFile.execute.bind(getInvoiceDocumentFile), acceptDriverEInvoiceMandate: acceptDriverEInvoiceMandate.execute.bind(acceptDriverEInvoiceMandate), getDriverEInvoiceMandateStatus: getDriverEInvoiceMandateStatus.execute.bind(getDriverEInvoiceMandateStatus), getDriverEInvoiceMandatePdfUrl: getDriverEInvoiceMandatePdfUrl.execute.bind(getDriverEInvoiceMandatePdfUrl) })
   await app.register(registerCashOnDeliveryHttpRoutes, { completion })
   await app.register(registerCardPaymentsHttpRoutes, { cardPayments })
   await app.register(registerDispatchHttpRoutes, { dispatch })

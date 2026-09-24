@@ -17,7 +17,7 @@ export default async function MerchantLayout({ children }: { children: React.Rea
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background md:flex-row">
       <Sidebar email={user.email ?? ''} />
-      <main className="min-h-0 flex-1 overflow-hidden px-page-mobile py-6 md:px-page-desktop">{children}</main>
+      <main className="min-h-0 flex-1 overflow-y-auto px-page-mobile py-6 md:overflow-hidden md:px-page-desktop">{children}</main>
     </div>
   )
 }

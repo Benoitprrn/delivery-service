@@ -21,6 +21,11 @@ export class PostgresDebitOpsRepository implements DebitOpsRepository {
     return result.rowCount === 1
   }
 
+  public async knownSucceededServiceRefundCents(chargeId: string): Promise<number> {
+    const result = await this.pool.query<{ cents: string }>("select coalesce(sum(refund_cents), 0)::text as cents from driver_reversal_service_refunds where stripe_charge_id = $1 and status = 'succeeded'", [chargeId])
+    return Number(result.rows[0]?.cents ?? '0')
+  }
+
   public async applyIncidents(input: { attemptId: string; chargeId: string; assessment: ChargeIncidentAssessment; now: Date }): Promise<{ applied: boolean; owedCents: number }> {
     const client = await this.pool.connect()
     try {

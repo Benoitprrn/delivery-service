@@ -1,87 +1,29 @@
 import { useFocusEffect, useRouter } from 'expo-router';
-import { Camera, ChevronLeft, FileUp, ShieldAlert } from 'lucide-react-native';
+import * as DocumentPicker from 'expo-document-picker';
+import { ChevronLeft, FileUp, Trash2 } from 'lucide-react-native';
+import { useCallback, useState } from 'react';
 import { BackHandler, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
-import { useCallback } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { apiRequest, uploadMultipart } from '../../../lib/api';
 import { useAuth } from '../../../lib/auth-context';
 import { EMERALD_600 } from '../../../lib/colors';
 import { showToast } from '../../../lib/toast';
-
-function Field({ label, value }: { label: string; value?: string | undefined }) {
-  return (
-    <View className="gap-1.5">
-      <Text className="font-sans-semibold text-body text-stone-600">{label}</Text>
-      <TextInput value={value ?? ''} editable={false} placeholder="À renseigner" placeholderTextColor="#A8A29E" className="h-touch-comfortable rounded-lg border border-border bg-stone-50 px-3 font-sans text-body-lg text-stone-700" />
-    </View>
-  );
-}
-
-function UploadButton({ label }: { label: string }) {
-  return (
-    <Pressable onPress={() => showToast('Ajout de document bientôt disponible')} className="h-touch-comfortable flex-row items-center justify-center gap-2 rounded-lg border-2 border-primary-600 active:bg-primary-50">
-      <FileUp size={19} color={EMERALD_600} />
-      <Text className="font-sans-semibold text-body-lg text-primary-700">{label}</Text>
-    </Pressable>
-  );
-}
-
+type Docs = { documents: { documentType: 'identity_document' | 'business_registration_document'; originalFilename: string | null; uploadedAt: string }[] };
+type VatRegime = 'assujetti' | 'franchise_en_base' | 'exonere';
+type DriverProfile = { firstName: string | null; lastName: string | null; phone: string | null };
+type DriverLegalInformation = { professionalName: string; siret: string; legalAddress: { line1: string; postalCode: string; city: string }; vatNumber: string | null; vatRegime: VatRegime | null; legalForm: string | null };
+type DriverLegalInformationResponse = { legalInformation: DriverLegalInformation | null };
+// React Native's fetch accepts { uri, name, type } as a multipart file part at runtime, but
+// the DOM FormData/Blob types don't model it — cast through this shape rather than `any`.
+type RNFilePart = { uri: string; name: string; type: string };
+function Field({ label, value, setValue, editable = true }: { label: string; value: string; setValue?: (v: string) => void; editable?: boolean }) { return <View className="gap-1.5"><Text className="font-sans-semibold text-body text-stone-600">{label}</Text><TextInput value={value} editable={editable} onChangeText={setValue} placeholder="À renseigner" className="h-touch-comfortable rounded-lg border border-border bg-stone-50 px-3 font-sans text-body-lg text-stone-700" /></View>; }
 export default function MyAccountScreen() {
-  const router = useRouter();
-  const { user } = useAuth();
-  const metadata = user?.user_metadata ?? {};
-  const firstName = typeof metadata.first_name === 'string' ? metadata.first_name : '';
-  const lastName = typeof metadata.last_name === 'string' ? metadata.last_name : '';
-  const fullName = typeof metadata.full_name === 'string' ? metadata.full_name : typeof metadata.name === 'string' ? metadata.name : '';
-
-  useFocusEffect(useCallback(() => {
-    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      router.replace('/compte');
-      return true;
-    });
-    return () => subscription.remove();
-  }, [router]));
-
-  return (
-    <SafeAreaView className="flex-1 bg-background" edges={['top']}>
-      <View className="flex-row items-center gap-2 px-page-mobile py-3">
-        <Pressable onPress={() => router.replace('/compte')} className="h-touch-comfortable w-touch-comfortable items-center justify-center">
-          <ChevronLeft size={24} color="#44403C" />
-        </Pressable>
-        <Text className="font-sans-bold text-h3 text-stone-800">Mon compte</Text>
-      </View>
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24, gap: 20 }}>
-        <View className="gap-4 rounded-2xl border border-border bg-surface p-4">
-          <Text className="font-sans-bold text-h3 text-stone-800">Identité</Text>
-          <Pressable onPress={() => showToast('Modification de photo bientôt disponible')} className="items-center gap-2 self-start active:opacity-75">
-            <View className="h-20 w-20 items-center justify-center rounded-full bg-primary-100">
-              <Camera size={28} color={EMERALD_600} />
-            </View>
-            <Text className="font-sans-semibold text-body text-primary-700">Modifier la photo</Text>
-          </Pressable>
-          <Field label="Prénom" value={firstName || fullName.split(' ')[0]} />
-          <Field label="Nom" value={lastName || fullName.split(' ').slice(1).join(' ')} />
-          <Field label="Date de naissance" />
-          <Field label="Téléphone" value={typeof metadata.phone === 'string' ? metadata.phone : ''} />
-          <Field label="Email" value={user?.email} />
-        </View>
-
-        <View className="gap-4 rounded-2xl border border-border bg-surface p-4">
-          <Text className="font-sans-bold text-h3 text-stone-800">Mon entreprise</Text>
-          <Field label="Numéro SIRET" />
-          <Field label="Nom de l'entreprise" />
-          <Field label="Adresse de l'entreprise" />
-          <UploadButton label="Joindre Kbis" />
-          <UploadButton label="Joindre pièce d'identité" />
-        </View>
-
-        <View className="flex-row items-center gap-2 rounded-xl bg-red-50 px-3 py-3">
-          <ShieldAlert size={20} color="#DC2626" />
-          <Text className="font-sans-semibold text-body-lg text-red-600">Non vérifié</Text>
-        </View>
-        <Pressable onPress={() => showToast('Enregistrement bientôt disponible')} className="h-touch-comfortable items-center justify-center rounded-lg bg-primary-600 active:bg-primary-700">
-          <Text className="font-sans-bold text-body-lg text-white">Enregistrer</Text>
-        </Pressable>
-      </ScrollView>
-    </SafeAreaView>
-  );
+ const router = useRouter(); const { user } = useAuth(); const [firstName,setFirstName]=useState(''); const [lastName,setLastName]=useState(''); const [phone,setPhone]=useState(''); const [professionalName,setProfessionalName]=useState(''); const [siret,setSiret]=useState(''); const [line1,setLine1]=useState(''); const [postalCode,setPostalCode]=useState(''); const [city,setCity]=useState(''); const [vatNumber,setVatNumber]=useState(''); const [vatRegime,setVatRegime]=useState<'assujetti'|'franchise_en_base'|'exonere'|''>(''); const [legalForm,setLegalForm]=useState(''); const [documents,setDocuments]=useState<Docs['documents']>([]);
+ const load=useCallback(async()=>{ try { const [profile,legal,docs]=await Promise.all([apiRequest<DriverProfile>('/api/v1/drivers/me'),apiRequest<DriverLegalInformationResponse>('/api/v1/drivers/me/legal-information'),apiRequest<Docs>('/api/v1/drivers/me/documents')]); setFirstName(profile.firstName ?? '');setLastName(profile.lastName ?? '');setPhone(profile.phone ?? ''); const v=legal.legalInformation; if(v){setProfessionalName(v.professionalName);setSiret(v.siret);setLine1(v.legalAddress.line1);setPostalCode(v.legalAddress.postalCode);setCity(v.legalAddress.city);setVatNumber(v.vatNumber ?? '');setVatRegime(v.vatRegime ?? '');setLegalForm(v.legalForm ?? '')} setDocuments(docs.documents) }catch{ showToast('Impossible de charger le compte.'); } },[]);
+ useFocusEffect(useCallback(()=>{void load(); const s=BackHandler.addEventListener('hardwareBackPress',()=>{router.replace('/compte');return true}); return()=>s.remove()},[load,router]));
+ async function save(){ try { await apiRequest('/api/v1/drivers/me',{method:'PATCH',body:JSON.stringify({firstName,lastName,phone})}); await apiRequest('/api/v1/drivers/me/legal-information',{method:'PATCH',body:JSON.stringify({professionalName,siret,legalAddress:{line1,postalCode,city,countryCode:'FR'},vatNumber:vatNumber||null,vatRegime:vatRegime||null,legalForm:legalForm||null})}); showToast('Informations enregistrées.'); }catch{showToast('Vérifiez les informations saisies.')} }
+ async function pick(type: Docs['documents'][number]['documentType']){ const r=await DocumentPicker.getDocumentAsync({type:['application/pdf','image/jpeg','image/png'],copyToCacheDirectory:true}); if(r.canceled)return; const a=r.assets[0]; if(!a)return; const form=new FormData(); form.append('documentType',type); const part: RNFilePart = {uri:a.uri,name:a.name,type:a.mimeType ?? (a.name.toLowerCase().endsWith('.pdf')?'application/pdf':'image/jpeg')}; form.append('file',part as unknown as Blob); try{await uploadMultipart('/api/v1/drivers/me/documents',form);await load()}catch{showToast('Document refusé.')} }
+ async function remove(type: Docs['documents'][number]['documentType']){try{await apiRequest(`/api/v1/drivers/me/documents/${type}`,{method:'DELETE'});await load()}catch{showToast('Suppression impossible.')}}
+ const doc=(type:Docs['documents'][number]['documentType'],label:string)=>{const d=documents.find(x=>x.documentType===type);return <View className="gap-2"><Text className="font-sans-semibold text-body text-stone-600">{label}</Text><Text className="font-sans text-body text-stone-500">{d?`Déposé le ${new Date(d.uploadedAt).toLocaleDateString('fr-FR')}`:'À déposer'}</Text><View className="flex-row gap-2"><Pressable onPress={()=>void pick(type)} className="h-touch-comfortable flex-1 flex-row items-center justify-center gap-2 rounded-lg border-2 border-primary-600"><FileUp size={18} color={EMERALD_600}/><Text className="font-sans-semibold text-primary-700">{d?'Remplacer':'Ajouter'}</Text></Pressable>{d&&<Pressable onPress={()=>void remove(type)} className="h-touch-comfortable w-touch-comfortable items-center justify-center rounded-lg border border-red-300"><Trash2 size={18} color="#DC2626"/></Pressable>}</View></View>};
+ return <SafeAreaView className="flex-1 bg-background" edges={['top']}><View className="flex-row items-center gap-2 px-page-mobile py-3"><Pressable onPress={()=>router.replace('/compte')} className="h-touch-comfortable w-touch-comfortable items-center justify-center"><ChevronLeft size={24} color="#44403C"/></Pressable><Text className="font-sans-bold text-h3 text-stone-800">Mon compte</Text></View><ScrollView contentContainerStyle={{paddingHorizontal:16,paddingBottom:24,gap:20}}><View className="gap-4 rounded-2xl border border-border bg-surface p-4"><Text className="font-sans-bold text-h3 text-stone-800">Informations personnelles</Text><Field label="Prénom" value={firstName} setValue={setFirstName}/><Field label="Nom" value={lastName} setValue={setLastName}/><Field label="E-mail" value={user?.email ?? ''} editable={false}/><Field label="Téléphone" value={phone} setValue={setPhone}/></View><View className="gap-4 rounded-2xl border border-border bg-surface p-4"><Text className="font-sans-bold text-h3 text-stone-800">Informations professionnelles</Text><Field label="Nom professionnel" value={professionalName} setValue={setProfessionalName}/><Field label="SIRET" value={siret} setValue={setSiret}/><Field label="Adresse légale" value={line1} setValue={setLine1}/><Field label="Code postal" value={postalCode} setValue={setPostalCode}/><Field label="Ville" value={city} setValue={setCity}/><Field label="TVA" value={vatNumber} setValue={setVatNumber}/><Field label="Régime TVA (assujetti / franchise_en_base / exonere)" value={vatRegime} setValue={(v)=>setVatRegime(v === 'assujetti' || v === 'franchise_en_base' || v === 'exonere' ? v : '')}/><Field label="Forme juridique" value={legalForm} setValue={setLegalForm}/></View><View className="gap-4 rounded-2xl border border-border bg-surface p-4"><Text className="font-sans-bold text-h3 text-stone-800">Documents</Text>{doc('identity_document',"Pièce d'identité")}{doc('business_registration_document','Kbis / RCS / extrait K / attestation SIRENE')}</View><Pressable onPress={()=>void save()} className="h-touch-comfortable items-center justify-center rounded-lg bg-primary-600"><Text className="font-sans-bold text-body-lg text-white">Enregistrer</Text></Pressable></ScrollView></SafeAreaView>;
 }

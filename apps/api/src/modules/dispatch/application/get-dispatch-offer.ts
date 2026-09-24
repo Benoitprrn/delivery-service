@@ -1,7 +1,7 @@
 import type { DispatchOffer } from '../domain/dispatch-offer.js'
 import { DispatchOfferAccessDeniedError, DispatchOfferNotFoundError } from '../domain/errors.js'
 import type { DispatchRepository } from '../ports/dispatch-repository.js'
-import type { DriverOrder } from '../../orders/domain/order.js'
+import type { DriverOrder } from '../../orders/public.js'
 
 type OrdersFacade = {
   findDriverOrderById(orderId: string): Promise<DriverOrder | null>

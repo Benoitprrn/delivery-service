@@ -58,7 +58,7 @@ export class CloseSettlementPeriodUseCase {
       const window = { finalizedFrom: schedule.periodStart, finalizedTo: schedule.periodEnd }
       const orders = await this.orders.listSettleableOrders({ ...window, createdNotBefore: goLiveAt })
       const excludedOrdersCount = await this.orders.countPreGoLiveFinalizedOrders({ ...window, createdBefore: goLiveAt })
-      const ledger = buildPeriodLedger({ orders, feeRateBps: settings.feeRateBps, feeRuleVersion: settings.feeRuleVersion })
+      const ledger = buildPeriodLedger({ orders })
       const status = input.dryRun === true
         ? 'dry_run' as const
         : await this.repository.closePeriod({
@@ -68,8 +68,6 @@ export class CloseSettlementPeriodUseCase {
           payrunAtUtc: schedule.payrunAtUtc,
           promiseDeadline: schedule.promiseDeadline,
           excludedOrdersCount,
-          feeRateBps: settings.feeRateBps,
-          feeRuleVersion: settings.feeRuleVersion,
           ledger
         })
       summaries.push({
@@ -85,7 +83,7 @@ export class CloseSettlementPeriodUseCase {
         lines: ledger.linesCount,
         merchantAmountCents: ledger.merchantAmountCents,
         dueCents: ledger.dueCents,
-        feeCents: ledger.feeCents,
+        feeCents: ledger.serviceFeeCents,
         excludedOrdersCount
       })
     }

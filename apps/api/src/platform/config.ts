@@ -58,6 +58,11 @@ const envSchema = z.object({
     (value) => typeof value === 'string' && value.trim() === '' ? undefined : value,
     z.enum(['true', 'false']).default('false')
   ).transform((value) => value === 'true'),
+  // Remboursements automatiques des frais de service après une reversal `driver_fault` réussie : DÉSACTIVÉS par défaut ; exigent Stripe.
+  SETTLEMENT_SERVICE_REFUND_WORKER_ENABLED: z.preprocess(
+    (value) => typeof value === 'string' && value.trim() === '' ? undefined : value,
+    z.enum(['true', 'false']).default('false')
+  ).transform((value) => value === 'true'),
   // Webhooks plateforme du règlement (journal + traitement) et réconciliation quotidienne (R70) : DÉSACTIVÉS par défaut ; exigent Stripe activé.
   SETTLEMENT_WEBHOOK_WORKER_ENABLED: z.preprocess(
     (value) => typeof value === 'string' && value.trim() === '' ? undefined : value,
@@ -84,8 +89,46 @@ const envSchema = z.object({
   SUPABASE_SECRET_KEY: z.string().min(1),
   VALKEY_URL: z.string().min(1),
   DISPATCH_OFFER_TTL_SECONDS: z.coerce.number().int().positive().default(60),
-  PGBOSS_DATABASE_URL: z.string().min(1)
+  PGBOSS_DATABASE_URL: z.string().min(1),
+  // Connecteur SUPER PDP (Étape 5, docs/work/invoicing-preparation-plan.md §9-§10) : DÉSACTIVÉ
+  // par défaut, aucun secret exigé ni appel réseau possible tant que non activé explicitement
+  // (même patron que STRIPE_PAYMENTS_ENABLED). Un seul host connu (aucune URL sandbox distincte
+  // dans la spec) : la distinction sandbox/production se fait par les identifiants OAuth utilisés,
+  // jamais par une bascule d'URL en dur.
+  SUPERPDP_ENABLED: z.preprocess(
+    (value) => typeof value === 'string' && value.trim() === '' ? undefined : value,
+    z.enum(['true', 'false']).default('false')
+  ).transform((value) => value === 'true'),
+  SUPERPDP_API_BASE_URL: z.string().url().default('https://api.superpdp.tech'),
+  SUPERPDP_CLIENT_ID: optionalNonBlank,
+  SUPERPDP_CLIENT_SECRET: optionalNonBlank,
+  // Schéma d'adresse électronique EN16931 (BT-34) — hypothèse Peppol France par SIREN, NON
+  // confirmée par la spec JSON (ADR 0007 §3) : configurable pour pouvoir corriger sans migration
+  // si le sandbox la rejette.
+  SUPERPDP_ELECTRONIC_ADDRESS_SCHEME: z.string().min(1).default('0225'),
+  SUPERPDP_MANDATE_GRANTOR_NUMBER_SCHEME: z.enum(['fr_siren', 'sandbox']).default('fr_siren'),
+  // Workers du connecteur, chacun DÉSACTIVÉ par défaut, indépendants les uns des autres.
+  SUPERPDP_MANDATE_WORKER_ENABLED: z.preprocess(
+    (value) => typeof value === 'string' && value.trim() === '' ? undefined : value,
+    z.enum(['true', 'false']).default('false')
+  ).transform((value) => value === 'true'),
+  SUPERPDP_SUBMISSION_WORKER_ENABLED: z.preprocess(
+    (value) => typeof value === 'string' && value.trim() === '' ? undefined : value,
+    z.enum(['true', 'false']).default('false')
+  ).transform((value) => value === 'true'),
+  SUPERPDP_POLLING_WORKER_ENABLED: z.preprocess(
+    (value) => typeof value === 'string' && value.trim() === '' ? undefined : value,
+    z.enum(['true', 'false']).default('false')
+  ).transform((value) => value === 'true'),
+  SUPERPDP_SUBMISSION_INTERVAL_SECONDS: z.coerce.number().int().positive().default(30),
+  SUPERPDP_POLL_INTERVAL_SECONDS: z.coerce.number().int().positive().default(300)
 }).superRefine((env, ctx) => {
+  if (env.SUPERPDP_ENABLED && (env.SUPERPDP_CLIENT_ID === undefined || env.SUPERPDP_CLIENT_SECRET === undefined)) {
+    ctx.addIssue({ code: 'custom', message: 'SUPER PDP is enabled but SUPERPDP_CLIENT_ID or SUPERPDP_CLIENT_SECRET is missing' })
+  }
+  if ((env.SUPERPDP_MANDATE_WORKER_ENABLED || env.SUPERPDP_SUBMISSION_WORKER_ENABLED || env.SUPERPDP_POLLING_WORKER_ENABLED) && !env.SUPERPDP_ENABLED) {
+    ctx.addIssue({ code: 'custom', message: 'A SUPER PDP worker is enabled but SUPERPDP_ENABLED is false' })
+  }
   if (env.SETTLEMENT_PRE_NOTIFICATION_WORKER_ENABLED && (env.RESEND_API_KEY === undefined || env.RESEND_FROM_EMAIL === undefined || env.SEPA_CREDITOR_ID === undefined || env.SETTLEMENT_SUPPORT_EMAIL === undefined)) {
     ctx.addIssue({ code: 'custom', message: 'Settlement pre-notification is enabled but RESEND_API_KEY, RESEND_FROM_EMAIL, SEPA_CREDITOR_ID or SETTLEMENT_SUPPORT_EMAIL is missing' })
   }
@@ -94,6 +137,9 @@ const envSchema = z.object({
   }
   if (env.SETTLEMENT_REVERSAL_WORKER_ENABLED && (!env.STRIPE_PAYMENTS_ENABLED || env.STRIPE_SECRET_KEY === undefined)) {
     ctx.addIssue({ code: 'custom', message: 'Driver reversal worker is enabled but Stripe payments are not enabled or the secret key is missing' })
+  }
+  if (env.SETTLEMENT_SERVICE_REFUND_WORKER_ENABLED && (!env.STRIPE_PAYMENTS_ENABLED || env.STRIPE_SECRET_KEY === undefined)) {
+    ctx.addIssue({ code: 'custom', message: 'Service refund worker is enabled but Stripe payments are not enabled or the secret key is missing' })
   }
   if (env.SETTLEMENT_PAYOUT_WORKER_ENABLED && (!env.STRIPE_PAYMENTS_ENABLED || env.STRIPE_SECRET_KEY === undefined)) {
     ctx.addIssue({ code: 'custom', message: 'Driver payout worker is enabled but Stripe payments are not enabled or the secret key is missing' })

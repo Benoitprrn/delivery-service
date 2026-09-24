@@ -31,7 +31,7 @@ afterAll(async () => {
 
 describe.skipIf(!isolated)('driver pay-runs on PostgreSQL (R60, D-M / D-N / D-O)', () => {
   it('1 driver x 10 restaurants: the grouped pay-run pays only the 8 really succeeded statements, then drip-pays the late one and the regularised one', async () => {
-    const rows = Array.from({ length: 10 }, (_, i): [number, number, 475] => [i + 1, 1, 475]) // 10 statements de 380 c (gain 475 - frais 95)
+    const rows = Array.from({ length: 10 }, (_, i): [number, number, 475] => [i + 1, 1, 475]) // 10 statements de 475 c (livraison intégrale)
     const world = await closeNotifyAndDebit(rows)
     await settleDebits(world, { 1: 'succeeded', 2: 'succeeded', 3: 'succeeded', 4: 'succeeded', 5: 'succeeded', 6: 'succeeded', 7: 'succeeded', 8: 'succeeded', 9: 'failed' }) // n°10 reste `processing`
     const run = payouts(world)
@@ -43,23 +43,23 @@ describe.skipIf(!isolated)('driver pay-runs on PostgreSQL (R60, D-M / D-N / D-O)
 
     // Pay-run GROUPÉ à payrun_at.
     const rechecksBefore = world.debits.retrievals
-    await expect(run.execute({ now: PAYRUN })).resolves.toMatchObject({ runsCreated: 1, runsProcessed: 1, statements: 10, transferred: 8, transferredCents: 3040, waiting: 2, errors: 0 })
+    await expect(run.execute({ now: PAYRUN })).resolves.toMatchObject({ runsCreated: 1, runsProcessed: 1, statements: 10, transferred: 8, transferredCents: 3800, waiting: 2, errors: 0 })
     expect(world.transfers.calls).toHaveLength(8)
     expect(world.debits.retrievals - rechecksBefore).toBe(8) // un contrôle Stripe de la charge AVANT CHAQUE Transfer
     for (const call of world.transfers.calls) {
-      expect(call.amountCents).toBe(380)
+      expect(call.amountCents).toBe(475)
       expect(call.destinationAccountId).toBe('acct_driver_1')
       expect(call.sourceTransactionId).toMatch(/^ch_fake_/) // source_transaction = charge du restaurant
       expect(call.idempotencyKey).toMatch(/^stmt:[0-9a-f-]+:charge:ch_fake_\d+:try:1$/)
       expect(call.metadata.funding_mode).toBe('source_transaction')
     }
     const byName = (a: unknown[], b: unknown[]): number => String(a[0]).localeCompare(String(b[0]))
-    expect((await transfersDb()).map((t) => [t.name, t.status, t.amount, t.run_kind]).sort(byName)).toEqual([1, 2, 3, 4, 5, 6, 7, 8].map((n) => [names(n), 'succeeded', 380, 'grouped']).sort(byName))
+    expect((await transfersDb()).map((t) => [t.name, t.status, t.amount, t.run_kind]).sort(byName)).toEqual([1, 2, 3, 4, 5, 6, 7, 8].map((n) => [names(n), 'succeeded', 475, 'grouped']).sort(byName))
     const first = await statements(1)
     expect(first.filter((s) => s.status === 'paid')).toHaveLength(8)
     expect(first.find((s) => s.name === names(9))).toMatchObject({ paid: 0, status: 'unpaid_restaurant' }) // impayé : rien envoyé, rattaché au restaurant
     expect(first.find((s) => s.name === names(10))).toMatchObject({ paid: 0, status: 'waiting_sepa' }) // en retard : en attente
-    expect(await count("select count(*) c from driver_pay_runs where run_kind = 'grouped' and status = 'completed' and statements_total = 10 and statements_paid = 8 and amount_cents = 3040")).toBe(1)
+    expect(await count("select count(*) c from driver_pay_runs where run_kind = 'grouped' and status = 'completed' and statements_total = 10 and statements_paid = 8 and amount_cents = 3800")).toBe(1)
 
     // Rien de nouveau : pas de second Transfer, pas de pay-run drip inutile.
     world.transfers.calls.length = 0
@@ -68,8 +68,8 @@ describe.skipIf(!isolated)('driver pay-runs on PostgreSQL (R60, D-M / D-N / D-O)
 
     // Le restaurant n°10 (en retard) finit par réussir : payé au compte-gouttes, sans attendre.
     await settleDebits(world, { 10: 'succeeded' }, later(PAYRUN, 20))
-    await expect(run.execute({ now: later(PAYRUN, 40) })).resolves.toMatchObject({ runsCreated: 1, transferred: 1, transferredCents: 380 })
-    expect((await statements(1)).find((s) => s.name === names(10))).toMatchObject({ paid: 380, status: 'paid' })
+    await expect(run.execute({ now: later(PAYRUN, 40) })).resolves.toMatchObject({ runsCreated: 1, transferred: 1, transferredCents: 475 })
+    expect((await statements(1)).find((s) => s.name === names(10))).toMatchObject({ paid: 475, status: 'paid' })
 
     // Le restaurant n°9 régularise (nouveau débit réussi) : payé à son tour, seul son reliquat.
     const settlement9 = (await pool.query<{ id: string; amount: string }>('select id, amount_cents::text as amount from merchant_settlements where merchant_id = $1::uuid', [merchantId(9)])).rows[0]!
@@ -82,11 +82,11 @@ describe.skipIf(!isolated)('driver pay-runs on PostgreSQL (R60, D-M / D-N / D-O)
        values($1::uuid,2,$2::bigint,'acct_fake_9','pi_regularised','ch_regularised',$3,'succeeded',now(),false,'MANDATE-9')`, [settlement9.id, settlement9.amount, `debit:${settlement9.id}:attempt:2`])
     world.debits.intents.set('pi_regularised', { paymentIntentId: 'pi_regularised', paymentIntentStatus: 'succeeded', amountCents: Number(settlement9.amount), currency: 'eur', livemode: false, attemptIdMetadata: null, chargeId: 'ch_regularised', chargeStatus: 'succeeded', paid: true, hasBalanceTransaction: true, availableOn: null, failureCode: null })
     world.transfers.calls.length = 0
-    await expect(run.execute({ now: later(PAYRUN, 60) })).resolves.toMatchObject({ transferred: 1, transferredCents: 380 })
-    expect(world.transfers.calls).toMatchObject([{ amountCents: 380, sourceTransactionId: 'ch_regularised' }])
-    expect((await statements(1)).every((s) => s.paid === 380 && s.status === 'paid')).toBe(true)
+    await expect(run.execute({ now: later(PAYRUN, 60) })).resolves.toMatchObject({ transferred: 1, transferredCents: 475 })
+    expect(world.transfers.calls).toMatchObject([{ amountCents: 475, sourceTransactionId: 'ch_regularised' }])
+    expect((await statements(1)).every((s) => s.paid === 475 && s.status === 'paid')).toBe(true)
     expect(await count("select count(*) c from driver_transfers where status = 'succeeded'")).toBe(10)
-    expect(await count("select coalesce(sum(amount_cents),0) c from driver_transfers where status = 'succeeded'")).toBe(3800)
+    expect(await count("select coalesce(sum(amount_cents),0) c from driver_transfers where status = 'succeeded'")).toBe(4750)
     expect(await count("select count(*) c from driver_pay_runs where run_kind = 'grouped'")).toBe(1)
     expect(await count("select count(*) c from driver_pay_runs where run_kind = 'drip'")).toBe(2)
   })
@@ -174,7 +174,7 @@ describe.skipIf(!isolated)('driver pay-runs on PostgreSQL (R60, D-M / D-N / D-O)
     expect(new Set(key3.map((c) => c.idempotencyKey)).size).toBe(1) // toujours la MÊME clé
     expect(rows.filter((t) => t.name === names(4)).map((t) => t.status)).toEqual(['succeeded'])
     expect(world.transfers.created).toHaveLength(4) // exactement un Transfer Stripe par statement, jamais de doublon
-    expect((await statements(1)).every((s) => s.paid === 380 && s.status === 'paid')).toBe(true)
+    expect((await statements(1)).every((s) => s.paid === 475 && s.status === 'paid')).toBe(true)
   })
 
   it('runs concurrent workers safely (one Transfer per statement) and annotates the destination payment without ever blocking the payment', async () => {

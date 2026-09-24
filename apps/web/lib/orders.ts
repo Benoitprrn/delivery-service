@@ -30,6 +30,9 @@ export type MerchantProofAsset = {
 
 export type Order = {
   id: string
+  // Référence humaine stable (8 chiffres), distincte de `id` (UUID technique) et de
+  // `trackingToken` (secret de suivi public) — voir docs/work/invoicing-preparation-plan.md §4.
+  publicReference: string
   merchantId: string
   driverId: string | null
   zoneId: string
@@ -51,6 +54,10 @@ export type Order = {
   distanceM: number
   durationS: number
   priceCents: number
+  // Montant dû au livreur et frais de service Locadely (ADR 0005) : additif, jamais soustrait
+  // au livreur. Nuls uniquement pour une commande antérieure à SF5 (aucune en pratique).
+  deliveryCents: number | null
+  serviceFeeCents: number | null
   // Paiement à la livraison (snapshot figé à la création). Optionnel tant que l'API
   // ne l'a pas déployé partout ; absent = pas de COD.
   cashOnDelivery?: OrderCashOnDelivery
@@ -107,13 +114,23 @@ export function isInProgress(status: OrderStatus): boolean {
   return IN_PROGRESS_STATUSES.includes(status)
 }
 
-// Une commande annulée/retournée n'a pas donné lieu à un paiement.
+// Seule une commande annulée n'a donné lieu à aucun paiement — une commande retournée reste
+// facturée au restaurant (ADR 0004/0005) et doit donc afficher son prix, pas un tiret.
 export function hasChargeablePrice(status: OrderStatus): boolean {
-  return status !== 'CANCELLED' && status !== 'RETURNED'
+  return status !== 'CANCELLED'
 }
 
 export function formatPriceEuros(priceCents: number): string {
   return (priceCents / 100).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+// Total HT dû par le restaurant pour cette commande : livraison + frais de service Locadely,
+// jamais un montant duquel le service serait retiré (ADR 0005). `priceCents` en repli pour une
+// commande antérieure à SF5 (aucune en pratique) où `deliveryCents`/`serviceFeeCents` sont nuls.
+export function orderTotalCents(order: Pick<Order, 'priceCents' | 'deliveryCents' | 'serviceFeeCents'>): number {
+  return order.deliveryCents !== null && order.serviceFeeCents !== null
+    ? order.deliveryCents + order.serviceFeeCents
+    : order.priceCents
 }
 
 export function formatDistanceKm(distanceM: number): string {

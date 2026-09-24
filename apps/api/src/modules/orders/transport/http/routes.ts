@@ -1,8 +1,19 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { createMerchantsModule } from '../../../merchants/public.js'
-import { createDriversModule } from '../../../drivers/public.js'
-import { createZonesModule } from '../../../zones/public.js'
-import { createOrdersModule, MerchantNotFoundError } from '../../public.js'
+import type { Merchant } from '../../../merchants/public.js'
+import type { Zone } from '../../../zones/public.js'
+import type { CollectOrderUseCase } from '../../application/collect-order.js'
+import type { CompleteOrderUseCase } from '../../application/complete-order.js'
+import type { ConfirmReturnUseCase, ReturnOrderUseCase } from '../../application/return-order.js'
+import type { CreateOrderUseCase } from '../../application/create-order.js'
+import type { EstimateOrderUseCase } from '../../application/estimate-order.js'
+import type { GetDriverEarningsUseCase } from '../../application/get-driver-earnings.js'
+import type { GetDriverHistoryUseCase } from '../../application/get-driver-history.js'
+import type { GetDriverOrdersUseCase } from '../../application/get-driver-orders.js'
+import type { GetMerchantOrdersUseCase } from '../../application/get-merchant-orders.js'
+import type { GetOrderRouteUseCase } from '../../application/get-order-route.js'
+import type { GetOrderTrackingUseCase } from '../../application/get-order-tracking.js'
+import type { ListAvailableOrdersUseCase } from '../../application/list-available-orders.js'
+import { MerchantNotFoundError } from '../../domain/errors.js'
 import { mapErrorToHttp } from './error-handler.js'
 import {
   createOrderBodySchema,
@@ -15,17 +26,24 @@ import {
 } from './schemas.js'
 
 type OrdersHttpRoutesOptions = {
-  orders: Omit<ReturnType<typeof createOrdersModule>,
-    'getOrderTracking' | 'findActiveTrackingTokensByDriverId' |
-    'findDriversWithActiveOrderForMerchant' | 'recordDispatchAttempt' | 'markDispatchFailed' |
-    'findOrderById' | 'findDispatchMetadata' | 'findStuckAvailableOrders' |
-    'findOrderForDriver' | 'verifyDeliveryCodeForCompletion' |
-    'completeCollectedCashOnDeliveryInTransaction' | 'releaseDriverCapacity' | 'listSettleableOrders' | 'countPreGoLiveFinalizedOrders'
-  > &
-    Partial<Pick<ReturnType<typeof createOrdersModule>, 'getOrderTracking'>>
-  findMerchantById: ReturnType<typeof createMerchantsModule>['findMerchantById']
-  findZoneById: ReturnType<typeof createZonesModule>['findZoneById']
-  findDriverById: ReturnType<typeof createDriversModule>['findDriverById']
+  orders: {
+    createOrder: CreateOrderUseCase['execute']
+    listAvailableOrders: ListAvailableOrdersUseCase['execute']
+    estimateOrder: EstimateOrderUseCase['execute']
+    getOrderTracking?: GetOrderTrackingUseCase['execute']
+    getMerchantOrders: GetMerchantOrdersUseCase['execute']
+    getDriverOrders: GetDriverOrdersUseCase['execute']
+    getDriverHistory: GetDriverHistoryUseCase['execute']
+    getDriverEarnings: GetDriverEarningsUseCase['execute']
+    getOrderRoute: GetOrderRouteUseCase['execute']
+    collectOrder: CollectOrderUseCase['execute']
+    completeOrder: CompleteOrderUseCase['execute']
+    returnOrder: ReturnOrderUseCase['execute']
+    confirmReturn: ConfirmReturnUseCase['execute']
+  }
+  findMerchantById(merchantId: string): Promise<Merchant | null>
+  findZoneById(zoneId: string): Promise<Zone | null>
+  findDriverById(driverId: string): Promise<{ zoneId: string } | null>
 }
 
 function sendMappedError(request: FastifyRequest, reply: FastifyReply, error: unknown): FastifyReply {

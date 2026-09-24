@@ -10,7 +10,7 @@ import { closeNotifyAndDebit, count, driverId, dropSettlementWorldFixtures, late
 import { silentLogger } from '../support/settlement-fakes.js'
 import { lockSettlementSingleton } from '../support/settlement-singleton-lock.js'
 
-// Base isolée requise. Transfers réels (R60) sur PostgreSQL, Stripe simulé. Un Transfer de 380 c (restaurant 1) et un de 728 c (restaurant 2) sont déjà envoyés au livreur 1.
+// Base isolée requise. Transfers réels (R60) sur PostgreSQL, Stripe simulé. Un Transfer de 475 c (restaurant 1) et un de 909 c (restaurant 2) sont déjà envoyés au livreur 1.
 vi.setConfig({ hookTimeout: 180_000 })
 const isolated = /settlement|test/.test((await pool.query<{ d: string }>('select current_database() d')).rows[0]?.d ?? '')
 const REQUESTER = 'aaaaaaaa-0000-4000-8000-000000000001'
@@ -125,17 +125,17 @@ describe.skipIf(!isolated)('driver reversals on PostgreSQL (R61, categories B an
     expect(await receivables()).toMatchObject([{ driver_id: driverId(1), amount: 380, status: 'open', reversal: id }])
   })
 
-  it('example 3: partial reversals — by decision (150 then 230 of 380, then no more) and by insufficient balance (120 recoverable of 300 => 120 reversed + 180 receivable)', async () => {
+  it('example 3: partial reversals — by decision (150 then 325 of 475, then no more) and by insufficient balance (120 recoverable of 300 => 120 reversed + 180 receivable)', async () => {
     const p = await paidWorld()
     const first = await approvedReversal(p, { amountCents: 150 })
-    const second = await approvedReversal(p, { amountCents: 230 })
+    const second = await approvedReversal(p, { amountCents: 325 })
     await expect(p.request.execute({ driverTransferId: p.transfer1.id, category: 'driver_fault', reasonCode: 'fraud', reason: 'x', decisionReference: 'DEC-TOO-MUCH', amountCents: 1, requestedBy: REQUESTER })).rejects.toMatchObject({ reason: 'amount_exceeds_transfer' })
     // Une seule reversal en exécution par livreur : la seconde attend le cycle suivant (jamais deux décisions sur le même solde).
     await expect(p.execute.execute({ now: later(PAYRUN, 24 * 60) })).resolves.toMatchObject({ claimed: 1, succeeded: 1, reversedCents: 150 })
-    await expect(p.execute.execute({ now: later(PAYRUN, 24 * 60 + 1) })).resolves.toMatchObject({ claimed: 1, succeeded: 1, reversedCents: 230 })
+    await expect(p.execute.execute({ now: later(PAYRUN, 24 * 60 + 1) })).resolves.toMatchObject({ claimed: 1, succeeded: 1, reversedCents: 325 })
     expect(await reversalRow(first)).toMatchObject({ status: 'succeeded', reversed: 150 })
-    expect(await reversalRow(second)).toMatchObject({ status: 'succeeded', reversed: 230, stripe_before: 150 }) // la 2ᵉ décision tient compte de ce que Stripe a déjà reversé
-    expect(p.stripe.reversedByTransfer.get(p.transfer1.stripeId)).toBe(380)
+    expect(await reversalRow(second)).toMatchObject({ status: 'succeeded', reversed: 325, stripe_before: 150 }) // la 2ᵉ décision tient compte de ce que Stripe a déjà reversé
+    expect(p.stripe.reversedByTransfer.get(p.transfer1.stripeId)).toBe(475)
 
     // Solde insuffisant : dans « available » il ne reste que 120 c pour reverser 300 c du Transfer n°2.
     await pool.query("update debit_attempts set available_on = '2026-09-10T00:00:00Z'")

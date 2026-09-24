@@ -1,0 +1,38 @@
+import { createHash, randomUUID } from 'node:crypto'
+import type { DriverEInvoiceMandateRepository, CurrentDriverEInvoiceMandate, DriverEInvoiceMandateSnapshot } from '../ports/driver-einvoice-mandate-repository.js'
+import type { MandateTemplateRepository } from '../ports/mandate-template-repository.js'
+import type { MandatePdfRenderer } from '../ports/mandate-pdf-renderer.js'
+import type { EInvoiceMandateStorage } from '../ports/einvoice-mandate-storage.js'
+import type { DriverLegalInformationReader, DriverLegalInformationSnapshot } from '../ports/driver-legal-information-reader.js'
+import type { DriverProfileReader } from '../ports/driver-profile-reader.js'
+import type { PlatformLegalIdentityReader } from '../ports/platform-legal-identity-reader.js'
+import { hasValidMandateTemplateHash } from '../domain/mandate-template.js'
+import type { MandateAcceptanceEvidence } from '../domain/mandate-acceptance.js'
+export class InvalidMandateAcceptanceError extends Error { public constructor(message: string) { super(message); this.name = 'InvalidMandateAcceptanceError' } }
+export class DriverLegalInformationRequiredError extends Error { public constructor() { super('Complete driver legal information is required before accepting a mandate'); this.name = 'DriverLegalInformationRequiredError' } }
+export class MandateTemplateNotConfiguredError extends Error { public constructor() { super('No mandate template is configured'); this.name = 'MandateTemplateNotConfiguredError' } }
+export class MandateTemplateIntegrityError extends Error { public constructor() { super('Mandate template integrity check failed'); this.name = 'MandateTemplateIntegrityError' } }
+export class PlatformLegalIdentityRequiredError extends Error { public constructor() { super('Complete platform legal identity is required before accepting a mandate'); this.name = 'PlatformLegalIdentityRequiredError' } }
+const png = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
+function signature(value: string): Buffer { const normalized = value.replace(/^data:image\/png;base64,/i, ''); if (!/^[A-Za-z0-9+/]*={0,2}$/.test(normalized) || normalized.length === 0 || normalized.length % 4 !== 0) throw new InvalidMandateAcceptanceError('Signature must be valid PNG base64'); const content = Buffer.from(normalized, 'base64'); if (content.length === 0 || content.length > 10 * 1024 * 1024 || !png.every((byte, index) => content[index] === byte)) throw new InvalidMandateAcceptanceError('Signature must be a PNG smaller than 10 MiB'); return content }
+export function complete(live: DriverLegalInformationSnapshot | null): live is DriverLegalInformationSnapshot { return live !== null && [live.professionalName, live.siret, live.siren, live.legalAddress.line1, live.legalAddress.postalCode, live.legalAddress.city, live.legalAddress.countryCode].every((v) => v.trim() !== '') && /^\d{14}$/.test(live.siret) && /^\d{9}$/.test(live.siren) && live.siret.slice(0, 9) === live.siren }
+export function joinAddress(parts: Array<string | null>): string { return parts.filter((part): part is string => part !== null).join(', ') }
+function snapshot(live: DriverLegalInformationSnapshot, profile: { firstName: string; lastName: string }, signerFirstName: string, signerLastName: string): DriverEInvoiceMandateSnapshot { return { firstNameSnapshot: profile.firstName, lastNameSnapshot: profile.lastName, siren: live.siren, legalNameSnapshot: live.professionalName, nameSnapshot: `${signerFirstName} ${signerLastName}`, professionalNameSnapshot: live.professionalName, siretSnapshot: live.siret, legalAddressLine1Snapshot: live.legalAddress.line1, legalAddressLine2Snapshot: live.legalAddress.line2, legalAddressPostalCodeSnapshot: live.legalAddress.postalCode, legalAddressCitySnapshot: live.legalAddress.city, legalAddressCountryCodeSnapshot: live.legalAddress.countryCode, vatNumberSnapshot: live.vatNumber, vatRegimeSnapshot: live.vatRegime, legalFormSnapshot: live.legalForm } }
+export class AcceptDriverEInvoiceMandateUseCase {
+  public constructor(private readonly mandates: DriverEInvoiceMandateRepository, private readonly templates: MandateTemplateRepository, private readonly renderer: MandatePdfRenderer, private readonly storage: EInvoiceMandateStorage, private readonly legalInformation: DriverLegalInformationReader, private readonly driverProfile: DriverProfileReader, private readonly platformIdentity: PlatformLegalIdentityReader, private readonly now: () => Date = () => new Date(), private readonly generateId: () => string = randomUUID) {}
+  public async execute(input: { driverId: string; signatureImageBase64: string; signerFirstName: string; signerLastName: string }): Promise<CurrentDriverEInvoiceMandate> {
+    const signerFirstName = input.signerFirstName.trim(); const signerLastName = input.signerLastName.trim(); if (signerFirstName === '' || signerLastName === '') throw new InvalidMandateAcceptanceError('Signer first and last names are required')
+    const current = await this.mandates.findCurrent(input.driverId); if (current !== null) return current
+    const signatureImage = signature(input.signatureImageBase64)
+    const [live, profile] = await Promise.all([this.legalInformation.findDriverLegalInformation(input.driverId), this.driverProfile.findDriverProfile(input.driverId)]); if (!complete(live) || profile === null) throw new DriverLegalInformationRequiredError()
+    const template = await this.templates.findCurrent(); if (template === null) throw new MandateTemplateNotConfiguredError(); if (!hasValidMandateTemplateHash(template)) throw new MandateTemplateIntegrityError()
+    const seller = await this.platformIdentity.findPlatformLegalIdentity(); if (seller === null) throw new PlatformLegalIdentityRequiredError()
+    const acceptedAt = this.now(); const mandateId = this.generateId(); const mandateSnapshot = snapshot(live, profile, signerFirstName, signerLastName)
+    const fields: Record<string, string> = { driver_first_name: profile.firstName, driver_last_name: profile.lastName, driver_legal_name: live.professionalName, driver_siren: live.siren, driver_siret: live.siret, driver_legal_address: joinAddress([live.legalAddress.line1, live.legalAddress.line2, `${live.legalAddress.postalCode} ${live.legalAddress.city}`, live.legalAddress.countryCode]), driver_vat_number_or_not_applicable: live.vatNumber ?? 'Non applicable', platform_legal_address: joinAddress([seller.addressLine1, seller.addressLine2, `${seller.postalCode} ${seller.city}`, seller.countryCode]), signer_first_name: signerFirstName, signer_last_name: signerLastName, signed_at: acceptedAt.toISOString(), mandate_version: String(template.version), mandate_reference: mandateId }
+    const pdf = await this.renderer.render({ templateText: template.text, fields, signatureImage, acceptedAt })
+    const signedPdfSha256 = createHash('sha256').update(pdf).digest('hex'); const signaturePngSha256 = createHash('sha256').update(signatureImage).digest('hex')
+    const evidence: MandateAcceptanceEvidence = { schemaVersion: 1, method: 'mobile_drawn_signature', acceptedAt: acceptedAt.toISOString(), signer: { driverId: input.driverId, firstName: signerFirstName, lastName: signerLastName }, mandateTemplate: { version: template.version, textSha256: template.textSha256 }, consentText: template.text, signaturePngSha256, signedPdfSha256 }
+    const signedPdfStoragePath = await this.storage.uploadMandatePdf({ driverId: input.driverId, mandateId, content: pdf })
+    return this.mandates.insert({ id: mandateId, driverId: input.driverId, snapshot: mandateSnapshot, mandateTemplateVersion: template.version, mandateTextHash: template.textSha256, acceptedAt, acceptanceEvidence: evidence, signedPdfStoragePath, signedPdfSha256 })
+  }
+}

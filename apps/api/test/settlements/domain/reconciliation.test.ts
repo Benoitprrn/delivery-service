@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { compareDebitAttempt, compareDriverBalance, compareStripeTransferOrphan, compareTransfer } from '../../../src/modules/settlements/public.js'
+import { compareDebitAttempt, compareDriverBalance, compareServiceRefund, compareStripeTransferOrphan, compareTransfer } from '../../../src/modules/settlements/public.js'
 
 const debitDb = { id: 'da', status: 'succeeded' as const, amountCents: 100, paymentIntentId: 'pi', chargeId: 'ch', livemode: false, ageMinutes: 0 }
 const debitStripe = { paymentIntentId: 'pi', paymentIntentStatus: 'succeeded', chargeId: 'ch', chargeStatus: 'succeeded', paid: true, hasBalanceTransaction: true, amountCents: 100, currency: 'eur', livemode: false, disputed: false, amountRefundedCents: 0 }
@@ -17,6 +17,13 @@ describe('settlement reconciliation', () => {
     expect(compareDebitAttempt(debitDb, { ...debitStripe, paymentIntentStatus: 'requires_payment_method', chargeStatus: 'failed', paid: false, hasBalanceTransaction: false })).toMatchObject([{ kind: 'debit_succeeded_but_not_at_stripe', scope: 'restaurant' }])
     expect(kinds(compareDebitAttempt(debitDb, { ...debitStripe, disputed: true, amountRefundedCents: 2 }))).toEqual(['debit_disputed_after_success', 'debit_refunded_after_success'])
     expect(compareDebitAttempt(debitDb, null)).toMatchObject([{ kind: 'debit_missing_at_stripe', scope: 'locadely_technical' }])
+    expect(compareDebitAttempt(debitDb, { ...debitStripe, amountRefundedCents: 200 }, { knownServiceRefundCents: 200 })).toEqual([])
+    expect(compareDebitAttempt(debitDb, { ...debitStripe, amountRefundedCents: 250 }, { knownServiceRefundCents: 200 })).toMatchObject([{ kind: 'debit_refunded_after_success', actualCents: 50 }])
+  })
+  it('treats service-refund reconciliation disagreements as Locadely technical findings', () => {
+    const db = { id: 'sr', status: 'succeeded' as const, stripeRefundId: 're', chargeId: 'ch', refundCents: 20, livemode: false }
+    expect(compareServiceRefund(db, { refundId: 're', chargeId: 'ch', amountCents: 20, currency: 'eur', status: 'succeeded' })).toEqual([])
+    expect(compareServiceRefund(db, null)).toMatchObject([{ scope: 'locadely_technical', kind: 'service_refund_missing_at_stripe' }])
   })
   it('detects stale and failed-local debit states, with no finding when snapshots agree', () => {
     expect(compareDebitAttempt({ ...debitDb, status: 'processing', ageMinutes: 31 }, debitStripe)).toMatchObject([{ kind: 'debit_stale' }])

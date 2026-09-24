@@ -26,7 +26,7 @@ for (const [d, r, dist] of orders) {
   const created = new Date(Date.UTC(2026, 7, 31, 8 + i, 5)); const completed = new Date(created.getTime() + 26 * 3600_000)
   const ins = await pool.query(`insert into orders(id,merchant_id,driver_id,zone_id,status,customer_name,customer_phone,pickup_address,pickup_lat,pickup_lng,delivery_address,delivery_lat,delivery_lng,distance_m,duration_s,driver_earning_cents,created_at,completed_at)
     values(gen_random_uuid(),$1::uuid,$2::uuid,$3::uuid,'COMPLETED','Client R90','0600000000','P',46.2,5.2,'D',46.21,5.21,$4::int,900,0,$5,$6) returning id`, [state.restaurants[r].id, state.drivers[d].id, zoneId, dist, created, completed])
-  await pool.query('update orders set driver_earning_cents = price_cents where id = $1::uuid', [ins.rows[0].id]); i += 1
+  await pool.query('update orders set driver_earning_cents = price_cents, delivery_cents = price_cents, service_fee_cents = floor(price_cents * 2000 / 10000) where id = $1::uuid', [ins.rows[0].id]); i += 1
 }
 const closed = await closeUseCase().execute({ now: new Date('2026-09-06T22:05:00Z') })
 log('clôture semaine 2', closed.map((c: any) => ({ monday: c.closingMonday, debit: c.debitDate, payrun: c.payrunAtUtc, settlements: c.merchantSettlements, statements: c.statements })))

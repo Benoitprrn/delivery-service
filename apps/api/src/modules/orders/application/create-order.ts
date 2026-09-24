@@ -93,6 +93,7 @@ export class CreateOrderUseCase {
       deliveryLng: command.deliveryLng,
       distanceM: route.distanceM,
       durationS: route.durationS,
+      merchantServiceFeeRateBpsOverride: merchant.serviceFeeRateBpsOverride ?? null,
       cashOnDeliveryAmountCents: command.cashOnDelivery?.amountCents ?? null,
       actor: { type: 'merchant', id: merchant.id },
       correlationId: command.correlationId ?? randomUUID()

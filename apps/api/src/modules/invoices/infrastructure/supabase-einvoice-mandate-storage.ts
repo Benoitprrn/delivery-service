@@ -1,0 +1,9 @@
+import type { EInvoiceMandateStorage } from '../ports/einvoice-mandate-storage.js'
+const BUCKET = 'einvoice-documents'
+export class SupabaseEInvoiceMandateStorage implements EInvoiceMandateStorage {
+  public constructor(private readonly url: string, private readonly key: string | undefined) {}
+  private headers(contentType?: string): HeadersInit { if (this.key === undefined) throw new Error('SUPABASE_SECRET_KEY is required for electronic invoice mandates'); return { authorization: `Bearer ${this.key}`, apikey: this.key, ...(contentType === undefined ? {} : { 'content-type': contentType }) } }
+  public async uploadMandatePdf(input: { driverId: string; mandateId: string; content: Buffer }): Promise<string> { const bucketPath = `drivers/${input.driverId}/einvoice-mandates/${input.mandateId}/mandate.pdf`; const r = await fetch(`${this.url}/storage/v1/object/${BUCKET}/${bucketPath}`, { method: 'POST', headers: this.headers('application/pdf'), body: new Uint8Array(input.content) }); if (!r.ok) throw new Error(`Supabase Storage upload responded with ${r.status}`); return bucketPath }
+  public async downloadMandatePdf(bucketPath: string): Promise<Buffer> { const r = await fetch(`${this.url}/storage/v1/object/${BUCKET}/${bucketPath}`, { headers: this.headers() }); if (!r.ok) throw new Error(`Supabase Storage download responded with ${r.status}`); return Buffer.from(await r.arrayBuffer()) }
+  public async createSignedMandatePdfUrl(bucketPath: string, expiresInSeconds = 300): Promise<string> { const r = await fetch(`${this.url}/storage/v1/object/sign/${BUCKET}/${bucketPath}`, { method: 'POST', headers: this.headers('application/json'), body: JSON.stringify({ expiresIn: expiresInSeconds }) }); if (!r.ok) throw new Error(`Supabase Storage signing responded with ${r.status}`); const body = await r.json() as { signedURL: string }; return `${this.url}/storage/v1${body.signedURL}` }
+}

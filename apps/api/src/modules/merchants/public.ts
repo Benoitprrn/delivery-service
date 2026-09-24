@@ -12,6 +12,9 @@ import type { SireneProvider } from './ports/sirene-provider.js'
 import { UnavailableSireneProvider } from './ports/sirene-provider.js'
 import { InseeSireneProvider } from './infrastructure/insee-sirene-provider.js'
 import { LookupMerchantLegalInformationUseCase, UpdateMerchantLegalInformationUseCase } from './application/legal-information.js'
+import { UpdateMerchantAccountContactUseCase } from './application/account-contact.js'
+import type { ElectronicAddressResolutionTrigger } from './ports/electronic-address-resolution-trigger.js'
+import type { ElectronicInvoicingStatusReader } from './ports/electronic-invoicing-status-reader.js'
 export { registerMerchantHttpRoutes } from './transport/http/routes.js'
 
 export type { Merchant } from './domain/merchant.js'
@@ -37,7 +40,9 @@ export function createMerchantsModule(
   authAdmin?: AuthAdmin,
   geocoding?: GeocodingProvider,
   zones?: ZoneRepository,
-  sirene?: SireneProvider
+  sirene?: SireneProvider,
+  electronicAddressTrigger: ElectronicAddressResolutionTrigger = { onLegalInformationUpdated: () => {} },
+  electronicInvoicingStatusReader: ElectronicInvoicingStatusReader = { getStatus: async () => 'unknown' }
 ) {
   const repository = new PostgresMerchantRepository(pool)
   const getMerchantUseCase = new GetMerchantUseCase(repository)
@@ -49,7 +54,8 @@ export function createMerchantsModule(
   })
   const sireneProvider = sirene ?? new UnavailableSireneProvider()
   const lookupLegalInformationUseCase = new LookupMerchantLegalInformationUseCase(repository, sireneProvider)
-  const updateLegalInformationUseCase = new UpdateMerchantLegalInformationUseCase(repository, repository, sireneProvider)
+  const updateLegalInformationUseCase = new UpdateMerchantLegalInformationUseCase(repository, repository, sireneProvider, electronicAddressTrigger)
+  const updateMerchantAccountContactUseCase = new UpdateMerchantAccountContactUseCase(repository)
 
   return {
     findMerchantById: repository.findById.bind(repository),
@@ -61,6 +67,9 @@ export function createMerchantsModule(
     provisionMerchant: provisionMerchantUseCase.execute.bind(provisionMerchantUseCase),
     getLegalInformation: repository.findLegalInformation.bind(repository),
     lookupLegalInformation: lookupLegalInformationUseCase.execute.bind(lookupLegalInformationUseCase),
-    updateLegalInformation: updateLegalInformationUseCase.execute.bind(updateLegalInformationUseCase)
+    updateLegalInformation: updateLegalInformationUseCase.execute.bind(updateLegalInformationUseCase),
+    getElectronicInvoicingStatus: electronicInvoicingStatusReader.getStatus.bind(electronicInvoicingStatusReader),
+    getAccountContact: repository.findAccountContact.bind(repository),
+    updateAccountContact: updateMerchantAccountContactUseCase.execute.bind(updateMerchantAccountContactUseCase)
   }
 }

@@ -8,6 +8,7 @@ import { HeartbeatDriverAvailabilityUseCase } from './application/heartbeat-driv
 import { GetDriverLiveProfileUseCase } from './application/get-driver-live-profile.js'
 import { RegisterDriverPushTokenUseCase } from './application/register-driver-push-token.js'
 import { GetDriverCapacityUseCase } from './application/get-driver-capacity.js'
+import { UpdateDriverLegalInformationUseCase } from './application/legal-information.js'
 import { PostgresDriverLocationRepository } from './infrastructure/postgres-driver-location-repository.js'
 import { PostgresDriverRepository } from './infrastructure/postgres-driver-repository.js'
 import { ValkeyDriverAvailabilityRepository } from './infrastructure/valkey-driver-availability-repository.js'
@@ -65,6 +66,7 @@ export function createDriversModule(
   const getDriverLiveProfileUseCase = new GetDriverLiveProfileUseCase(repository, availabilityRepository)
   const registerDriverPushTokenUseCase = new RegisterDriverPushTokenUseCase(repository)
   const getDriverCapacityUseCase = new GetDriverCapacityUseCase(capacityRepository, tracking?.activeOrders)
+  const updateDriverLegalInformationUseCase = new UpdateDriverLegalInformationUseCase(repository, repository)
 
   return {
     findDriverById: repository.findById.bind(repository),
@@ -82,5 +84,8 @@ export function createDriversModule(
     findAvailableWithinRadius: positionRepository.findAllWithinRadius.bind(positionRepository),
     findLatestDriverLocation: locationRepository.findLatestByDriverId.bind(locationRepository),
     getLiveDriverProfile: getDriverLiveProfileUseCase.execute.bind(getDriverLiveProfileUseCase)
+    ,updateProfile: repository.updateProfile.bind(repository)
+    ,getLegalInformation: repository.findLegalInformation.bind(repository)
+    ,updateLegalInformation: updateDriverLegalInformationUseCase.execute.bind(updateDriverLegalInformationUseCase)
   }
 }

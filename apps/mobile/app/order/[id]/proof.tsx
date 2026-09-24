@@ -17,12 +17,17 @@ type ProofScreenState = 'code' | 'method' | 'signature' | 'photo';
 const SUCCESS_MESSAGE: Record<DeliveryProof['method'], string> = {
   code: 'Livraison confirmée par code ✓',
   signature: 'Livraison confirmée par signature ✓',
-  photo: 'Livraison confirmée par photo ✓'
+  photo: 'Livraison confirmée par photo ✓',
 };
 
 export default function DeliveryProofModal() {
   const router = useRouter();
-  const { id, version, codAmountCents } = useLocalSearchParams<{ id: string; version: string; codAmountCents?: string }>();
+  const { id, publicReference, version, codAmountCents } = useLocalSearchParams<{
+    id: string;
+    publicReference: string;
+    version: string;
+    codAmountCents?: string;
+  }>();
   const isCashOnDelivery = codAmountCents !== undefined;
   const [screen, setScreen] = useState<ProofScreenState>('code');
   const expectedVersion = Number(version);
@@ -32,13 +37,21 @@ export default function DeliveryProofModal() {
       // COD : le code est vérifié par le serveur, qui crée la session et le paiement ; la commande
       // ne se termine qu'après l'encaissement (écran de paiement), jamais ici.
       if (proof.method !== 'code') return;
-      const result = await api.createCompletionSession(id, expectedVersion, proof.code, resolveReaderFamily());
+      const result = await api.createCompletionSession(
+        id,
+        expectedVersion,
+        proof.code,
+        resolveReaderFamily(),
+      );
       if (result.status === 'completed') {
         showToast(SUCCESS_MESSAGE.code);
         router.dismissAll();
         return;
       }
-      router.replace({ pathname: '/order/[id]/payment', params: { id } });
+      router.replace({
+        pathname: '/order/[id]/payment',
+        params: { id, publicReference },
+      });
       return;
     }
     try {
@@ -46,7 +59,12 @@ export default function DeliveryProofModal() {
     } catch (err) {
       // Le paiement doit être encaissé avant de terminer un COD (le serveur reste l'autorité).
       if (err instanceof ApiError && err.code === 'CashOnDeliveryPaymentRequired') {
-        throw new ApiError(err.status, 'Le paiement par carte doit être encaissé avant de terminer cette livraison.', undefined, err.code);
+        throw new ApiError(
+          err.status,
+          'Le paiement par carte doit être encaissé avant de terminer cette livraison.',
+          undefined,
+          err.code,
+        );
       }
       throw err;
     }
@@ -63,8 +81,12 @@ export default function DeliveryProofModal() {
       'Confirmer que le client est absent ? La commande passera en retour.',
       [
         { text: 'Annuler', style: 'cancel' },
-        { text: 'Confirmer', style: 'destructive', onPress: () => void confirmAbsent() }
-      ]
+        {
+          text: 'Confirmer',
+          style: 'destructive',
+          onPress: () => void confirmAbsent(),
+        },
+      ],
     );
   }
 
@@ -81,7 +103,7 @@ export default function DeliveryProofModal() {
   return (
     <SafeAreaView className="flex-1 bg-background">
       <View className="flex-row items-center justify-between px-page-mobile py-3">
-        <Text className="font-sans text-body-lg text-stone-400">#{id.slice(-6)}</Text>
+        <Text className="font-sans text-body-lg text-stone-400">#{publicReference}</Text>
         <Pressable
           onPress={() => router.back()}
           className="h-touch-comfortable w-touch-comfortable items-center justify-center"
@@ -96,7 +118,8 @@ export default function DeliveryProofModal() {
             Paiement à la livraison — {formatPriceEuros(Number(codAmountCents))}
           </Text>
           <Text className="mt-1 font-sans text-body-lg text-stone-600">
-            Code du client puis paiement par carte : la livraison ne se termine qu'après l'encaissement.
+            Code du client puis paiement par carte : la livraison ne se termine qu'après
+            l'encaissement.
           </Text>
         </View>
       )}
@@ -109,7 +132,7 @@ export default function DeliveryProofModal() {
               isCashOnDelivery
                 ? Alert.alert(
                     'Code indisponible',
-                    'Le code du client est obligatoire pour une livraison avec paiement. Utilisez « Client absent » si le client ne peut pas le fournir.'
+                    'Le code du client est obligatoire pour une livraison avec paiement. Utilisez « Client absent » si le client ne peut pas le fournir.',
                   )
                 : setScreen('method')
             }

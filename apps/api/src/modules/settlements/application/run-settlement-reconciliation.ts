@@ -1,4 +1,4 @@
-import { compareDebitAttempt, compareDriverBalance, compareStripeTransferOrphan, compareTransfer, type ReconciliationFinding } from '../domain/reconciliation.js'
+import { compareDebitAttempt, compareDriverBalance, compareServiceRefund, compareStripeTransferOrphan, compareTransfer, type ReconciliationFinding } from '../domain/reconciliation.js'
 import type { ExaminedRef, ReconciliationRepository, ReconciliationStripeReader } from '../ports/settlement-ops.js'
 import type { SettlementLogger } from '../ports/settlement-close.js'
 
@@ -32,7 +32,7 @@ export class RunSettlementReconciliationUseCase {
       for (const item of await this.repository.loadDebits({ now, sinceDays: this.config.debitLookbackDays ?? 60, limit })) {
         try {
           const stripe = item.db.paymentIntentId === null ? null : await this.stripe.readDebit(item.db.paymentIntentId)
-          findings.push(...compareDebitAttempt(item.db, stripe))
+          findings.push(...compareDebitAttempt(item.db, stripe, { knownServiceRefundCents: item.knownServiceRefundCents }))
           examined.push({ refType: 'debit_attempt', refId: item.db.id })
           checked += 1
         } catch (error) { readErrors += 1; this.warn('debit', error) }
@@ -45,6 +45,14 @@ export class RunSettlementReconciliationUseCase {
           examined.push({ refType: 'driver_transfer', refId: item.db.id })
           checked += 1
         } catch (error) { readErrors += 1; this.warn('transfer', error) }
+      }
+      for (const item of await this.repository.loadServiceRefunds({ now, sinceDays: this.config.debitLookbackDays ?? 60, limit })) {
+        try {
+          const stripe = item.db.stripeRefundId === null ? null : await this.stripe.readRefund(item.db.stripeRefundId)
+          findings.push(...compareServiceRefund(item.db, stripe))
+          examined.push({ refType: 'driver_reversal_service_refund', refId: item.db.id })
+          checked += 1
+        } catch (error) { readErrors += 1; this.warn('service_refund', error) }
       }
       // Sens inverse : ce que Stripe a créé récemment et que la base ne connaît pas.
       try {

@@ -8,7 +8,7 @@ const closed = await closeUseCase().execute({ now: CLOSE_NOW })
 log('clôture', closed)
 const again = await closeUseCase().execute({ now: new Date(CLOSE_NOW.getTime() + 3600_000) })
 const period = (await pool.query("select id, period_start, period_end, status, closed_at, debit_date::text as debit_date, payrun_at, promise_deadline, go_live_at_snapshot from settlement_periods where status = 'closed'")).rows
-const lines = (await pool.query('select count(*)::int as n, sum(driver_earning_cents)::int as earning, sum(fee_cents)::int as fee from settlement_lines')).rows[0]
+const lines = (await pool.query('select count(*)::int as n, sum(delivery_cents)::int as delivery, sum(service_fee_cents)::int as service from settlement_lines')).rows[0]
 const stmts = (await pool.query('select count(*)::int as n, sum(due_cents)::int as due from settlement_statements')).rows[0]
 const ms = (await pool.query('select count(*)::int as n, sum(amount_cents)::int as amount from merchant_settlements')).rows[0]
 log('agrégats', { period, lines, stmts, ms })

@@ -1,0 +1,8 @@
+import { ACCOUNT_DOCUMENTS_BUCKET, type DocumentStorage } from '../ports/document-storage.js'
+export class SupabaseDocumentStorage implements DocumentStorage {
+  public constructor(private readonly url: string, private readonly key: string | undefined) {}
+  private headers(contentType?: string): HeadersInit { if (this.key === undefined) throw new Error('SUPABASE_SECRET_KEY is required for account documents'); return { authorization: `Bearer ${this.key}`, apikey: this.key, ...(contentType === undefined ? {} : { 'content-type': contentType }) } }
+  public async upload(input: { bucketPath: string; content: Buffer; contentType: string }): Promise<void> { const r = await fetch(`${this.url}/storage/v1/object/${ACCOUNT_DOCUMENTS_BUCKET}/${input.bucketPath}`, { method: 'POST', headers: this.headers(input.contentType), body: new Uint8Array(input.content) }); if (!r.ok) throw new Error(`Supabase Storage upload responded with ${r.status}`) }
+  public async createSignedUrl(bucketPath: string, expiresInSeconds: number): Promise<string> { const r = await fetch(`${this.url}/storage/v1/object/sign/${ACCOUNT_DOCUMENTS_BUCKET}/${bucketPath}`, { method: 'POST', headers: this.headers('application/json'), body: JSON.stringify({ expiresIn: expiresInSeconds }) }); if (!r.ok) throw new Error(`Supabase Storage signing responded with ${r.status}`); const body = await r.json() as { signedURL: string }; return `${this.url}/storage/v1${body.signedURL}` }
+  public async delete(bucketPath: string): Promise<void> { const r = await fetch(`${this.url}/storage/v1/object/${ACCOUNT_DOCUMENTS_BUCKET}/${bucketPath}`, { method: 'DELETE', headers: this.headers() }); if (!r.ok) throw new Error(`Supabase Storage deletion responded with ${r.status}`) }
+}

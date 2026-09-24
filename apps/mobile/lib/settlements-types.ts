@@ -39,7 +39,7 @@ export type DriverPeriodView = {
 export type DriverSettlementsResponse = {
   generatedAt: string;
   identityVisible: boolean;
-  currentWeek: { periodStart: string; periodEnd: string; deliveries: number; estimatedNetCents: number; closesAt: string } | null;
+  currentWeek: { periodStart: string; periodEnd: string; deliveries: number; estimatedAmountCents: number; closesAt: string } | null;
   totals: { totalCents: number; sentCents: number; pendingCents: number; unpaidByRestaurantCents: number };
   periods: DriverPeriodView[];
 };

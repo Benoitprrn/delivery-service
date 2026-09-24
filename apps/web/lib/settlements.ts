@@ -9,6 +9,10 @@ export type MerchantSettlementView = {
   periodStart: string
   periodEnd: string
   amountCents: number
+  // Décomposition additive (ADR 0005) : amountCents = deliveryCents + serviceFeeCents, jamais
+  // deliveryCents - serviceFeeCents. deliveryCents appartient au livreur, serviceFeeCents à Locadely.
+  deliveryCents: number
+  serviceFeeCents: number
   deliveriesCount: number
   displayState: MerchantDisplayState
   debit: { date: string | null; ibanLast4: string | null; mandateReference: string | null; attemptNo: number | null; preNotifiedAt: string | null }
@@ -17,7 +21,7 @@ export type MerchantSettlementView = {
   openReceivableCents: number
 }
 export type MerchantAttemptView = { attemptNo: number; outcome: 'in_progress' | 'succeeded' | 'failed' | 'technical'; at: string }
-export type MerchantSettlementLineView = { orderId: string; finalizedAt: string; status: 'COMPLETED' | 'RETURNED'; amountCents: number }
+export type MerchantSettlementLineView = { orderId: string; finalizedAt: string; status: 'COMPLETED' | 'RETURNED'; amountCents: number; deliveryCents: number; serviceFeeCents: number }
 export type MerchantSettlementsResponse = { generatedAt: string; settlements: MerchantSettlementView[] }
 export type MerchantSettlementDetailResponse = { generatedAt: string; settlement: MerchantSettlementView; attempts: MerchantAttemptView[]; lines: MerchantSettlementLineView[] }
 

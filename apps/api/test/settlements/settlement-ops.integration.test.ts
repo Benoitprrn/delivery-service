@@ -56,7 +56,7 @@ describe.skipIf(!isolated)('settlement operations on PostgreSQL (R70): manual re
     await settleDebits(world, { 1: 'failed', 2: 'succeeded' })
     await payouts(world).execute({ now: PAYRUN })
     expect((await statementsOf(1))[0]).toMatchObject({ paid: 0, status: 'unpaid_restaurant' })
-    expect((await statementsOf(2))[0]).toMatchObject({ paid: 728, status: 'paid' })
+    expect((await statementsOf(2))[0]).toMatchObject({ paid: 909, status: 'paid' })
 
     // Jamais de nouvelle tentative automatique après un véritable échec.
     for (const minutes of [1, 60, 24 * 60, 10 * 24 * 60]) await runDebits(world, later(PAYRUN, minutes))
@@ -101,9 +101,9 @@ describe.skipIf(!isolated)('settlement operations on PostgreSQL (R70): manual re
     expect((await statementsOf(1))[0]).toMatchObject({ status: 'succeeded_held', paid: 0 })
 
     world.transfers.calls.length = 0
-    await expect(payouts(world).execute({ now: new Date('2026-09-16T08:00:00Z') })).resolves.toMatchObject({ runsCreated: 1, transferred: 1, transferredCents: 380 })
-    expect(world.transfers.calls[0]).toMatchObject({ amountCents: 380, sourceTransactionId: retry.charge }) // la charge de la RELANCE, pas celle de l'échec
-    expect((await statementsOf(1))[0]).toMatchObject({ paid: 380, status: 'paid' })
+    await expect(payouts(world).execute({ now: new Date('2026-09-16T08:00:00Z') })).resolves.toMatchObject({ runsCreated: 1, transferred: 1, transferredCents: 475 })
+    expect(world.transfers.calls[0]).toMatchObject({ amountCents: 475, sourceTransactionId: retry.charge }) // la charge de la RELANCE, pas celle de l'échec
+    expect((await statementsOf(1))[0]).toMatchObject({ paid: 475, status: 'paid' })
     expect(await count("select count(*) c from driver_pay_runs where run_kind = 'drip'")).toBe(1)
     expect(await count('select count(*) c from driver_transfers')).toBe(2)
   })
@@ -162,7 +162,7 @@ describe.skipIf(!isolated)('settlement operations on PostgreSQL (R70): SEPA succ
     const world = await closeNotifyAndDebit([[1, 1, 475]])
     await settleDebits(world, { 1: 'succeeded' })
     await payouts(world).execute({ now: PAYRUN })
-    expect((await statementsOf(1))[0]).toMatchObject({ paid: 380, status: 'paid' })
+    expect((await statementsOf(1))[0]).toMatchObject({ paid: 475, status: 'paid' })
     const charge = (await attemptsOf(1))[0]!.charge as string
     const incidents = new FakeIncidents()
     incidents.views.set(charge, disputeView(charge, { dispute: { id: 'dp_1', status: 'lost', amountCents: 475, reason: 'debit_not_authorized' } }))
@@ -172,7 +172,7 @@ describe.skipIf(!isolated)('settlement operations on PostgreSQL (R70): SEPA succ
 
     expect((await pool.query("select kind, external_id, amount_cents::int as amount, status from debit_incidents")).rows).toEqual([{ kind: 'dispute', external_id: 'dp_1', amount: 475, status: 'lost' }])
     expect((await pool.query("select kind, amount_cents::int as amount, status, stripe_dispute_id from merchant_receivables")).rows).toEqual([{ kind: 'sepa_dispute', amount: 475, status: 'open', stripe_dispute_id: 'dp_1' }]) // dette du RESTAURANT
-    expect((await statementsOf(1))[0]).toMatchObject({ paid: 380, status: 'paid' }) // le livreur garde ce qu'il a reçu
+    expect((await statementsOf(1))[0]).toMatchObject({ paid: 475, status: 'paid' }) // le livreur garde ce qu'il a reçu
     expect(await count('select count(*) c from driver_transfer_reversals')).toBe(0)
     expect(await count('select count(*) c from driver_receivables')).toBe(0) // aucune créance sur le livreur
     expect(await count("select count(*) c from driver_transfers where status = 'succeeded'")).toBe(1)
@@ -194,14 +194,14 @@ describe.skipIf(!isolated)('settlement operations on PostgreSQL (R70): SEPA succ
     await w.process.processBatch({ now: later(PAYRUN, -60) })
     expect((await statementsOf(1))[0]).toMatchObject({ paid: 0, status: 'unpaid_restaurant', hold: 'debit_incident' })
 
-    await expect(payouts(world).execute({ now: PAYRUN })).resolves.toMatchObject({ transferred: 1, transferredCents: 728 }) // seul le restaurant n°2 est payé
+    await expect(payouts(world).execute({ now: PAYRUN })).resolves.toMatchObject({ transferred: 1, transferredCents: 909 }) // seul le restaurant n°2 est payé
     expect(world.transfers.calls.map((c) => c.sourceTransactionId)).not.toContain(charge1)
     expect((await statementsOf(1))[0]).toMatchObject({ paid: 0, status: 'unpaid_restaurant' })
     // Le filet de la base : même un code défectueux ne peut pas créer un Transfer depuis une charge contestée.
     const debit = (await pool.query<{ id: string }>("select id from debit_attempts where stripe_charge_id = $1", [charge1])).rows[0]!.id
     const statement = (await pool.query<{ id: string; period_id: string }>('select id, period_id from settlement_statements where merchant_id = $1::uuid', [merchantId(1)])).rows[0]!
     const run = (await pool.query<{ id: string }>("insert into driver_pay_runs(period_id, driver_id, run_kind, scheduled_for) values($1::uuid, $2::uuid, 'drip', now()) returning id", [statement.period_id, driverId(1)])).rows[0]!.id
-    await expect(pool.query("insert into driver_transfers(statement_id, pay_run_id, debit_attempt_id, stripe_charge_id, amount_cents, try_no, idempotency_key, status, livemode) values($1::uuid,$2::uuid,$3::uuid,$4,380,1,$5,'creating',false)", [statement.id, run, debit, charge1, `k-${randomUUID()}`])).rejects.toThrow(/contesté ou remboursé/)
+    await expect(pool.query("insert into driver_transfers(statement_id, pay_run_id, debit_attempt_id, stripe_charge_id, amount_cents, try_no, idempotency_key, status, livemode) values($1::uuid,$2::uuid,$3::uuid,$4,475,1,$5,'creating',false)", [statement.id, run, debit, charge1, `k-${randomUUID()}`])).rejects.toThrow(/contesté ou remboursé/)
     await pool.query('delete from driver_pay_runs where id = $1::uuid', [run]) // run de test : ne bloque pas le worker
 
     // Litige GAGNÉ : la charge redevient utilisable, la créance est soldée, R60 paie en drip.
@@ -210,8 +210,8 @@ describe.skipIf(!isolated)('settlement operations on PostgreSQL (R70): SEPA succ
     await w.process.processBatch({ now: later(PAYRUN, 30) })
     expect((await pool.query('select status from debit_incidents')).rows).toEqual([{ status: 'won' }])
     expect((await pool.query('select status from merchant_receivables')).rows).toEqual([{ status: 'recovered' }])
-    await expect(payouts(world).execute({ now: later(PAYRUN, 60) })).resolves.toMatchObject({ transferred: 1, transferredCents: 380 })
-    expect((await statementsOf(1))[0]).toMatchObject({ paid: 380, status: 'paid' })
+    await expect(payouts(world).execute({ now: later(PAYRUN, 60) })).resolves.toMatchObject({ transferred: 1, transferredCents: 475 })
+    expect((await statementsOf(1))[0]).toMatchObject({ paid: 475, status: 'paid' })
   })
 
   it('a refund is a restaurant incident too; stale/out-of-order events cannot regress state because Stripe is re-read each time', async () => {
@@ -236,12 +236,14 @@ describe.skipIf(!isolated)('settlement operations on PostgreSQL (R70): DB <-> St
   class FakeReader implements ReconciliationStripeReader {
     public debits = new Map<string, StripeDebitSnapshot | null>()
     public transfers = new Map<string, StripeTransferSnapshot | null>()
+    public refunds = new Map<string, { refundId: string; chargeId: string; amountCents: number; currency: string; status: string } | null>()
     public recent: Array<{ transferId: string; amountCents: number; driverTransferIdMetadata: string | null }> = []
     public balances = new Map<string, { availableCents: number; pendingCents: number }>()
     public payouts = new Map<string, Array<{ payoutId: string; amountCents: number; status: string; automatic: boolean; arrivalDate: string | null }>>()
     public failDebitFor: string | null = null
     public async readDebit(pi: string): Promise<StripeDebitSnapshot | null> { if (pi === this.failDebitFor) throw new Error('boom'); return this.debits.get(pi) ?? null }
     public async readTransfer(id: string): Promise<StripeTransferSnapshot | null> { return this.transfers.get(id) ?? null }
+    public async readRefund(id: string): Promise<{ refundId: string; chargeId: string; amountCents: number; currency: string; status: string } | null> { return this.refunds.get(id) ?? null }
     public async readTransferOrigin(id: string): Promise<{ transferId: string; amountCents: number; driverTransferIdMetadata: string | null } | null> { return this.recent.find((t) => t.transferId === id) ?? null }
     public async listRecentTransfers(): Promise<Array<{ transferId: string; amountCents: number; driverTransferIdMetadata: string | null }>> { return this.recent }
     public async readDriverBalance(account: string): Promise<{ availableCents: number; pendingCents: number } | null> { return this.balances.get(account) ?? { availableCents: 0, pendingCents: 0 } }

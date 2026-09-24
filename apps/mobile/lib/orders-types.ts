@@ -22,6 +22,7 @@ export type OrderCashOnDelivery = {
 
 export type Order = {
   id: string;
+  publicReference: string;
   merchantId: string;
   driverId: string | null;
   zoneId: string;
@@ -43,6 +44,8 @@ export type Order = {
   distanceM: number;
   durationS: number;
   priceCents: number;
+  deliveryCents: number | null;
+  serviceFeeCents: number | null;
   // Optionnel tant que l'API n'est pas déployée partout ; absent = pas de COD.
   cashOnDelivery?: OrderCashOnDelivery;
   assignedAt: string | null;

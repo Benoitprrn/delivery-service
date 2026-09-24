@@ -2,7 +2,8 @@ import type { Pool, PoolClient } from 'pg'
 import { inTransaction } from '../../../platform/transaction.js'
 import { MerchantNotFoundError } from '../domain/errors.js'
 import type { Merchant } from '../domain/merchant.js'
-import type { MerchantInformationPatch, MerchantRepository, MerchantLegalInformation, MerchantLegalInformationPatch, MerchantLegalInformationRepository, SireneVerificationStatus } from '../ports/merchant-repository.js'
+import type { MerchantAccountContactRepository, MerchantInformationPatch, MerchantRepository, MerchantLegalInformation, MerchantLegalInformationPatch, MerchantLegalInformationRepository, SireneVerificationStatus } from '../ports/merchant-repository.js'
+import type { MerchantAccountContact } from '../application/account-contact.js'
 
 type MerchantRow = {
   id: string
@@ -15,15 +16,16 @@ type MerchantRow = {
   lat: number | null
   lng: number | null
   onboarding_completed: boolean
+  service_fee_rate_bps_override: number | null
 }
 
-type LegalRow = { merchant_id: string; siret: string; siren: string; legal_name: string; legal_address_line1: string; legal_address_line2: string | null; legal_address_postal_code: string; legal_address_city: string; legal_address_country_code: string; legal_address_commune_code: string | null; billing_address_line1: string | null; billing_address_line2: string | null; billing_address_postal_code: string | null; billing_address_city: string | null; billing_address_country_code: string | null; billing_address_commune_code: string | null; vat_number: string | null; sirene_verification_status: SireneVerificationStatus; sirene_verified_at: Date | null }
-export class PostgresMerchantRepository implements MerchantRepository, MerchantLegalInformationRepository {
+type LegalRow = { merchant_id: string; siret: string; siren: string; legal_name: string; legal_address_line1: string; legal_address_line2: string | null; legal_address_postal_code: string; legal_address_city: string; legal_address_country_code: string; legal_address_commune_code: string | null; billing_address_line1: string | null; billing_address_line2: string | null; billing_address_postal_code: string | null; billing_address_city: string | null; billing_address_country_code: string | null; billing_address_commune_code: string | null; vat_number: string | null; vat_regime: 'assujetti' | 'franchise_en_base' | 'exonere' | null; legal_form: string | null; buyer_reference: string | null; sirene_verification_status: SireneVerificationStatus; sirene_verified_at: Date | null }
+export class PostgresMerchantRepository implements MerchantRepository, MerchantLegalInformationRepository, MerchantAccountContactRepository {
   public constructor(private readonly pool: Pool) {}
 
   public async findById(id: string, client?: PoolClient): Promise<Merchant | null> {
     const result = await (client ?? this.pool).query<MerchantRow>(
-      'select id, name, zone_id, address, phone_primary, phone_secondary, logo_url, lat, lng, onboarding_completed from merchants where id = $1',
+      'select id, name, zone_id, address, phone_primary, phone_secondary, logo_url, lat, lng, onboarding_completed, service_fee_rate_bps_override from merchants where id = $1',
       [id]
     )
     const row = result.rows[0]
@@ -40,7 +42,8 @@ export class PostgresMerchantRepository implements MerchantRepository, MerchantL
           logoUrl: row.logo_url,
           lat: row.lat,
           lng: row.lng,
-          onboardingCompleted: row.onboarding_completed
+          onboardingCompleted: row.onboarding_completed,
+          serviceFeeRateBpsOverride: row.service_fee_rate_bps_override
         }
   }
 
@@ -59,7 +62,7 @@ export class PostgresMerchantRepository implements MerchantRepository, MerchantL
       `update merchants
        set name = $1, address = $2, lat = $3, lng = $4, zone_id = $5, phone_primary = $6, phone_secondary = $7
        where id = $8
-       returning id, name, zone_id, address, phone_primary, phone_secondary, logo_url, lat, lng, onboarding_completed`,
+       returning id, name, zone_id, address, phone_primary, phone_secondary, logo_url, lat, lng, onboarding_completed, service_fee_rate_bps_override`,
       [patch.name, patch.address, patch.lat, patch.lng, patch.zoneId, patch.phonePrimary, patch.phoneSecondary, id]
     )
     const row = result.rows[0]
@@ -78,14 +81,15 @@ export class PostgresMerchantRepository implements MerchantRepository, MerchantL
       logoUrl: row.logo_url,
       lat: row.lat,
       lng: row.lng,
-      onboardingCompleted: row.onboarding_completed
+      onboardingCompleted: row.onboarding_completed,
+      serviceFeeRateBpsOverride: row.service_fee_rate_bps_override
     }
   }
 
   public async updateLogoUrl(id: string, logoUrl: string): Promise<Merchant> {
     const result = await this.pool.query<MerchantRow>(
       `update merchants set logo_url = $1 where id = $2
-       returning id, name, zone_id, address, phone_primary, phone_secondary, logo_url, lat, lng, onboarding_completed`,
+       returning id, name, zone_id, address, phone_primary, phone_secondary, logo_url, lat, lng, onboarding_completed, service_fee_rate_bps_override`,
       [logoUrl, id]
     )
     const row = result.rows[0]
@@ -93,7 +97,8 @@ export class PostgresMerchantRepository implements MerchantRepository, MerchantL
     return {
       id: row.id, name: row.name, zoneId: row.zone_id, address: row.address,
       phonePrimary: row.phone_primary, phoneSecondary: row.phone_secondary, logoUrl: row.logo_url,
-      lat: row.lat, lng: row.lng, onboardingCompleted: row.onboarding_completed
+      lat: row.lat, lng: row.lng, onboardingCompleted: row.onboarding_completed,
+      serviceFeeRateBpsOverride: row.service_fee_rate_bps_override
     }
   }
 
@@ -101,13 +106,23 @@ export class PostgresMerchantRepository implements MerchantRepository, MerchantL
     const result = await this.pool.query<LegalRow>('select * from merchant_legal_information where merchant_id = $1', [merchantId]); const row = result.rows[0]
     return row === undefined ? null : this.legalFromRow(row)
   }
+  public async findAccountContact(merchantId: string): Promise<MerchantAccountContact | null> {
+    const result = await this.pool.query<{ first_name: string; last_name: string; phone: string }>('select first_name, last_name, phone from merchant_account_contact where merchant_id = $1', [merchantId])
+    const row = result.rows[0]
+    return row === undefined ? null : { firstName: row.first_name, lastName: row.last_name, phone: row.phone }
+  }
+  public async upsertAccountContact(merchantId: string, contact: MerchantAccountContact): Promise<MerchantAccountContact> {
+    const result = await this.pool.query<{ first_name: string; last_name: string; phone: string }>(`insert into merchant_account_contact (merchant_id, first_name, last_name, phone) values ($1, $2, $3, $4) on conflict (merchant_id) do update set first_name = excluded.first_name, last_name = excluded.last_name, phone = excluded.phone returning first_name, last_name, phone`, [merchantId, contact.firstName, contact.lastName, contact.phone])
+    const row = result.rows[0]!
+    return { firstName: row.first_name, lastName: row.last_name, phone: row.phone }
+  }
   public async upsertLegalInformation(patch: MerchantLegalInformationPatch): Promise<MerchantLegalInformation> {
     const a = patch.legalAddress; const b = patch.billingAddress
-    const result = await this.pool.query<LegalRow>(`insert into merchant_legal_information (merchant_id,siret,siren,legal_name,legal_address_line1,legal_address_line2,legal_address_postal_code,legal_address_city,legal_address_country_code,legal_address_commune_code,billing_address_line1,billing_address_line2,billing_address_postal_code,billing_address_city,billing_address_country_code,billing_address_commune_code,vat_number,sirene_verification_status,sirene_verified_at)
-values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,case when $18='verified' then now() else null end)
-on conflict (merchant_id) do update set siret=excluded.siret,siren=excluded.siren,legal_name=excluded.legal_name,legal_address_line1=excluded.legal_address_line1,legal_address_line2=excluded.legal_address_line2,legal_address_postal_code=excluded.legal_address_postal_code,legal_address_city=excluded.legal_address_city,legal_address_country_code=excluded.legal_address_country_code,legal_address_commune_code=excluded.legal_address_commune_code,billing_address_line1=excluded.billing_address_line1,billing_address_line2=excluded.billing_address_line2,billing_address_postal_code=excluded.billing_address_postal_code,billing_address_city=excluded.billing_address_city,billing_address_country_code=excluded.billing_address_country_code,billing_address_commune_code=excluded.billing_address_commune_code,vat_number=excluded.vat_number,sirene_verification_status=excluded.sirene_verification_status,sirene_verified_at=case when excluded.sirene_verification_status='verified' then now() else null end
-returning *`, [patch.merchantId,patch.siret,patch.siren,patch.legalName,a.line1,a.line2,a.postalCode,a.city,a.countryCode,a.communeCode,b?.line1 ?? null,b?.line2 ?? null,b?.postalCode ?? null,b?.city ?? null,b?.countryCode ?? null,b?.communeCode ?? null,patch.vatNumber,patch.sireneVerificationStatus])
+    const result = await this.pool.query<LegalRow>(`insert into merchant_legal_information (merchant_id,siret,siren,legal_name,legal_address_line1,legal_address_line2,legal_address_postal_code,legal_address_city,legal_address_country_code,legal_address_commune_code,billing_address_line1,billing_address_line2,billing_address_postal_code,billing_address_city,billing_address_country_code,billing_address_commune_code,vat_number,vat_regime,legal_form,buyer_reference,sirene_verification_status,sirene_verified_at)
+values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,case when $21='verified' then now() else null end)
+on conflict (merchant_id) do update set siret=excluded.siret,siren=excluded.siren,legal_name=excluded.legal_name,legal_address_line1=excluded.legal_address_line1,legal_address_line2=excluded.legal_address_line2,legal_address_postal_code=excluded.legal_address_postal_code,legal_address_city=excluded.legal_address_city,legal_address_country_code=excluded.legal_address_country_code,legal_address_commune_code=excluded.legal_address_commune_code,billing_address_line1=excluded.billing_address_line1,billing_address_line2=excluded.billing_address_line2,billing_address_postal_code=excluded.billing_address_postal_code,billing_address_city=excluded.billing_address_city,billing_address_country_code=excluded.billing_address_country_code,billing_address_commune_code=excluded.billing_address_commune_code,vat_number=excluded.vat_number,vat_regime=excluded.vat_regime,legal_form=excluded.legal_form,buyer_reference=excluded.buyer_reference,sirene_verification_status=excluded.sirene_verification_status,sirene_verified_at=case when excluded.sirene_verification_status='verified' then now() else null end
+returning *`, [patch.merchantId,patch.siret,patch.siren,patch.legalName,a.line1,a.line2,a.postalCode,a.city,a.countryCode,a.communeCode,b?.line1 ?? null,b?.line2 ?? null,b?.postalCode ?? null,b?.city ?? null,b?.countryCode ?? null,b?.communeCode ?? null,patch.vatNumber,patch.vatRegime,patch.legalForm,patch.buyerReference,patch.sireneVerificationStatus])
     return this.legalFromRow(result.rows[0]!)
   }
-  private legalFromRow(row: LegalRow): MerchantLegalInformation { const legalAddress={line1:row.legal_address_line1,line2:row.legal_address_line2,postalCode:row.legal_address_postal_code,city:row.legal_address_city,countryCode:row.legal_address_country_code,communeCode:row.legal_address_commune_code}; const billingAddress=row.billing_address_line1 === null ? null : {line1:row.billing_address_line1,line2:row.billing_address_line2,postalCode:row.billing_address_postal_code!,city:row.billing_address_city!,countryCode:row.billing_address_country_code!,communeCode:row.billing_address_commune_code}; return {merchantId:row.merchant_id,siret:row.siret,siren:row.siren,legalName:row.legal_name,legalAddress,billingAddress,vatNumber:row.vat_number,sireneVerificationStatus:row.sirene_verification_status,sireneVerifiedAt:row.sirene_verified_at} }
+  private legalFromRow(row: LegalRow): MerchantLegalInformation { const legalAddress={line1:row.legal_address_line1,line2:row.legal_address_line2,postalCode:row.legal_address_postal_code,city:row.legal_address_city,countryCode:row.legal_address_country_code,communeCode:row.legal_address_commune_code}; const billingAddress=row.billing_address_line1 === null ? null : {line1:row.billing_address_line1,line2:row.billing_address_line2,postalCode:row.billing_address_postal_code!,city:row.billing_address_city!,countryCode:row.billing_address_country_code!,communeCode:row.billing_address_commune_code}; return {merchantId:row.merchant_id,siret:row.siret,siren:row.siren,legalName:row.legal_name,legalAddress,billingAddress,vatNumber:row.vat_number,vatRegime:row.vat_regime,legalForm:row.legal_form,buyerReference:row.buyer_reference,sireneVerificationStatus:row.sirene_verification_status,sireneVerifiedAt:row.sirene_verified_at} }
 }

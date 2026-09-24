@@ -30,7 +30,7 @@ class FakeStripe implements StripeProvider {
 async function merchant(): Promise<string> {
   const id = randomUUID(); merchants.push(id)
   await pool.query('insert into merchants(id, name) values ($1, $2)', [id, `Payments local ${id}`])
-  await merchantRepository.upsertLegalInformation({ merchantId: id, siret: '73282932000074', siren: '732829320', legalName: 'Payments local', legalAddress: { line1: '1 Local street', line2: null, postalCode: '01000', city: 'Local', countryCode: 'FR', communeCode: null }, billingAddress: null, vatNumber: null, sireneVerificationStatus: 'verified' })
+  await merchantRepository.upsertLegalInformation({ merchantId: id, siret: '73282932000074', siren: '732829320', legalName: 'Payments local', legalAddress: { line1: '1 Local street', line2: null, postalCode: '01000', city: 'Local', countryCode: 'FR', communeCode: null }, billingAddress: null, vatNumber: null, buyerReference: null, sireneVerificationStatus: 'verified' })
   return id
 }
 function useCases(stripe: FakeStripe) { const complete = new CompleteSepaSetupIntentUseCase(repository, stripe); return { create: new CreateSepaSetupIntentUseCase(repository, stripe, merchantRepository.findById.bind(merchantRepository), merchantRepository.findLegalInformation.bind(merchantRepository), complete), complete, get: new GetSepaPaymentMethodUseCase(repository) } }

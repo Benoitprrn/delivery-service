@@ -1,13 +1,17 @@
 import { randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
-import { PG_FOREIGN_KEY_VIOLATION, pgErrorCode } from '../../../platform/pg-error.js'
+import {
+  PG_FOREIGN_KEY_VIOLATION,
+  PG_UNIQUE_VIOLATION,
+  pgErrorCode,
+} from '../../../platform/pg-error.js'
 import { inTransaction } from '../../../platform/transaction.js'
 import {
   CashOnDeliveryAlreadyCollectedError,
   CashOnDeliveryNotRequiredError,
   CashOnDeliveryPaymentRequiredError,
   InvalidZoneAssignmentError,
-  OrderConflictError
+  OrderConflictError,
 } from '../domain/errors.js'
 import {
   buildOrderAssignedEvent,
@@ -16,17 +20,32 @@ import {
   buildOrderCreatedEvent,
   buildOrderReturnedEvent,
   buildOrderReturningEvent,
-  type DomainEvent
+  type DomainEvent,
 } from '../domain/order-events.js'
-import type { Actor, AvailableOrder, DeliveryProofMethod, DriverHistoryOrder, DriverOrder, MerchantOrder, MerchantProofAsset, Order, OrderForDriver } from '../domain/order.js'
+import type {
+  Actor,
+  AvailableOrder,
+  DeliveryProofMethod,
+  DriverHistoryOrder,
+  DriverOrder,
+  MerchantOrder,
+  MerchantProofAsset,
+  Order,
+  OrderForDriver,
+} from '../domain/order.js'
 import type { DriverCompletedOrderEarning, DriverEarnings } from '../domain/driver-earnings.js'
-import type { CountExcludedOrdersInput, ListSettleableOrdersInput, SettleableFinalStatus, SettleableOrder } from '../domain/settleable-order.js'
+import type {
+  CountExcludedOrdersInput,
+  ListSettleableOrdersInput,
+  SettleableFinalStatus,
+  SettleableOrder,
+} from '../domain/settleable-order.js'
 import {
   DeliveryCodeExpiredError,
   DeliveryCodeInvalidError,
   DeliveryCodeLockedError,
   generateDeliveryCode,
-  verifyDeliveryCode
+  verifyDeliveryCode,
 } from '../domain/delivery-code.js'
 import type { OrderEvent } from '../domain/order-event.js'
 import type { OrderStatus } from '../domain/order-status.js'
@@ -35,13 +54,19 @@ import type {
   CompleteCollectedCashOnDeliveryCommand,
   CreateOrderInput,
   OrderRepository,
-  VerifyDeliveryCodeForCompletionInput
+  VerifyDeliveryCodeForCompletionInput,
 } from '../ports/order-repository.js'
 import type { OrderTrackingRecord } from '../ports/order-tracking-repository.js'
 import { GROUPAGE_WINDOW_MINUTES } from '../domain/dispatch.js'
+import {
+  computeServiceFeeCents,
+  createPricingSettingsReader,
+  type PricingSettingsReader,
+} from '../../pricing/public.js'
 
 type OrderRow = {
   id: string
+  public_reference: string
   merchant_id: string
   driver_id: string | null
   zone_id: string
@@ -63,6 +88,9 @@ type OrderRow = {
   distance_m: number
   duration_s: number
   price_cents: number
+  delivery_cents: number | null
+  service_fee_cents: number | null
+  pricing_rule_version: number | null
   cash_on_delivery_required: boolean
   cash_on_delivery_amount_cents: number | null
   cash_on_delivery_currency: 'eur' | null
@@ -130,8 +158,9 @@ type SettleableOrderRow = {
   id: string
   merchant_id: string
   driver_id: string
-  driver_earning_cents: number
-  price_cents: number
+  delivery_cents: number
+  service_fee_cents: number
+  pricing_rule_version: number
   final_status: SettleableFinalStatus
   created_at: Date
   finalized_at: Date
@@ -152,6 +181,7 @@ type DriverCompletedOrderEarningRow = {
 function mapOrder(row: OrderRow): Order {
   return {
     id: row.id,
+    publicReference: row.public_reference,
     merchantId: row.merchant_id,
     driverId: row.driver_id,
     zoneId: row.zone_id,
@@ -173,18 +203,20 @@ function mapOrder(row: OrderRow): Order {
     distanceM: row.distance_m,
     durationS: row.duration_s,
     priceCents: row.price_cents,
+    deliveryCents: row.delivery_cents,
+    serviceFeeCents: row.service_fee_cents,
     cashOnDelivery: {
       required: row.cash_on_delivery_required,
       amountCents: row.cash_on_delivery_amount_cents,
       currency: row.cash_on_delivery_currency,
-      collected: row.cash_on_delivery_collected_at !== null
+      collected: row.cash_on_delivery_collected_at !== null,
     },
     deliveryProofMethod: row.delivery_proof_method,
     assignedAt: row.assigned_at,
     collectedAt: row.collected_at,
     completedAt: row.completed_at,
     createdAt: row.created_at,
-    updatedAt: row.updated_at
+    updatedAt: row.updated_at,
   }
 }
 
@@ -201,17 +233,20 @@ function mapDriverOrder(row: DriverOrderRow): DriverOrder {
       delivery_code_generated_at: null,
       delivery_code_expires_at: null,
       delivery_code_failed_attempts: 0,
-      delivery_code_locked_at: null
+      delivery_code_locked_at: null,
     }),
     customerName: row.customer_name,
     customerPhone: row.customer_phone,
     merchantName: row.merchant_name,
-    merchantPhone: row.merchant_phone
+    merchantPhone: row.merchant_phone,
   }
 }
 
 function mapDriverHistoryOrder(row: DriverOrderRow): DriverHistoryOrder {
-  return { ...mapDriverOrder(row), driverEarningCents: row.driver_earning_cents }
+  return {
+    ...mapDriverOrder(row),
+    driverEarningCents: row.driver_earning_cents,
+  }
 }
 
 function mapOrderForDriver(row: OrderRow): OrderForDriver {
@@ -228,14 +263,14 @@ function mapOrderForDriver(row: OrderRow): OrderForDriver {
       required: row.cash_on_delivery_required,
       amountCents: row.cash_on_delivery_amount_cents,
       currency: row.cash_on_delivery_currency,
-      collected: row.cash_on_delivery_collected_at !== null
-    }
+      collected: row.cash_on_delivery_collected_at !== null,
+    },
   }
 }
 
 const driverOrderSelect = `
   select
-    o.id, o.merchant_id, o.driver_id, o.zone_id, o.status, o.version,
+    o.id, o.public_reference, o.merchant_id, o.driver_id, o.zone_id, o.status, o.version,
     case when o.status in ('COLLECTED', 'RETURNING', 'RETURNED', 'COMPLETED')
       then o.customer_name else null end as customer_name,
     case when o.status in ('COLLECTED', 'RETURNING', 'RETURNED', 'COMPLETED')
@@ -255,7 +290,7 @@ const driverOrderSelect = `
 function mapMerchantOrder(
   row: MerchantOrderRow,
   events: OrderEvent[],
-  proofAsset: MerchantProofAsset | null
+  proofAsset: MerchantProofAsset | null,
 ): MerchantOrder {
   const order: MerchantOrder = {
     ...mapOrder(row),
@@ -264,7 +299,7 @@ function mapMerchantOrder(
     driverName: row.driver_name,
     driverPhone: row.driver_phone,
     proofAsset,
-    dispatchFailed: row.metadata?.dispatch_failed === true
+    dispatchFailed: row.metadata?.dispatch_failed === true,
   }
   // TODO: TWILIO — temporary plaintext display for the owning merchant only.
   // Never expose the bcrypt hash, and never compare this value for verification.
@@ -281,7 +316,7 @@ function mapOrderEvent(row: OrderEventRow): OrderEvent {
     toStatus: row.to_status,
     actorType: row.actor_type,
     actorId: row.actor_id,
-    createdAt: row.created_at
+    createdAt: row.created_at,
   }
 }
 
@@ -298,18 +333,25 @@ function isZoneForeignKeyViolation(error: unknown, constraint: string): boolean 
   return pgErrorCode(error) === PG_FOREIGN_KEY_VIOLATION && constraintName(error) === constraint
 }
 
+function isPublicReferenceUniqueViolation(error: unknown): boolean {
+  return (
+    pgErrorCode(error) === PG_UNIQUE_VIOLATION &&
+    constraintName(error) === 'orders_public_reference_key'
+  )
+}
+
 async function insertTransitionEvent(
   client: PoolClient,
   order: Order,
   fromStatus: OrderStatus | null,
   actor: Actor,
   correlationId: string,
-  event: DomainEvent
+  event: DomainEvent,
 ): Promise<void> {
   await client.query(
     `insert into order_events (order_id, from_status, to_status, actor_type, actor_id, correlation_id)
      values ($1, $2, $3, $4, $5, $6)`,
-    [order.id, fromStatus, order.status, actor.type, actor.id ?? null, correlationId]
+    [order.id, fromStatus, order.status, actor.type, actor.id ?? null, correlationId],
   )
   await client.query(
     `insert into outbox_event
@@ -321,19 +363,24 @@ async function insertTransitionEvent(
       order.id,
       event.aggregateVersion,
       event.payload,
-      correlationId
-    ]
+      correlationId,
+    ],
   )
 }
 
 export class PostgresOrderRepository implements OrderRepository {
-  public constructor(private readonly pool: Pool) {}
+  public constructor(
+    private readonly pool: Pool,
+    private readonly pricingSettings: PricingSettingsReader = createPricingSettingsReader(pool),
+  ) {}
 
   public async create(input: CreateOrderInput): Promise<Order> {
     try {
-      return await inTransaction(this.pool, async (client) => {
-        const result = await client.query<OrderRow>(
-          `insert into orders (
+      for (let attempt = 0; ; attempt += 1) {
+        try {
+          return await inTransaction(this.pool, async (client) => {
+            const result = await client.query<OrderRow>(
+              `insert into orders (
              merchant_id, zone_id, customer_name, customer_phone, customer_email, pickup_scheduled_at,
              order_details, delivery_instructions, delivery_address_complement, status,
              pickup_address, pickup_lat, pickup_lng, delivery_address, delivery_lat, delivery_lng,
@@ -342,57 +389,78 @@ export class PostgresOrderRepository implements OrderRepository {
            ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'AVAILABLE', $10, $11, $12, $13, $14, $15, $16, $17, 0,
              $18::boolean, $19::integer, case when $18::boolean then 'eur' else null end, case when $18::boolean then now() else null end)
            returning *`,
-          [
-            input.merchantId,
-            input.zoneId,
-            input.customerName,
-            input.customerPhone,
-            input.customerEmail,
-            input.pickupScheduledAt,
-            input.orderDetails,
-            input.deliveryInstructions,
-            input.deliveryAddressComplement,
-            input.pickupAddress,
-            input.pickupLat,
-            input.pickupLng,
-            input.deliveryAddress,
-            input.deliveryLat,
-            input.deliveryLng,
-            input.distanceM,
-            input.durationS,
-            input.cashOnDeliveryAmountCents !== null,
-            input.cashOnDeliveryAmountCents
-          ]
-        )
-        const row = result.rows[0]
-        if (row === undefined) {
-          throw new Error('Order insert did not return a row')
+              [
+                input.merchantId,
+                input.zoneId,
+                input.customerName,
+                input.customerPhone,
+                input.customerEmail,
+                input.pickupScheduledAt,
+                input.orderDetails,
+                input.deliveryInstructions,
+                input.deliveryAddressComplement,
+                input.pickupAddress,
+                input.pickupLat,
+                input.pickupLng,
+                input.deliveryAddress,
+                input.deliveryLat,
+                input.deliveryLng,
+                input.distanceM,
+                input.durationS,
+                input.cashOnDeliveryAmountCents !== null,
+                input.cashOnDeliveryAmountCents,
+              ],
+            )
+            const row = result.rows[0]
+            if (row === undefined) {
+              throw new Error('Order insert did not return a row')
+            }
+            if (row.pricing_rule_version === null) {
+              throw new Error('Order insert did not return a pricing rule version')
+            }
+            // Copy the price frozen by the insert trigger. The fee rate is read from
+            // that same frozen rule version, never from a newly active rule.
+            const settings = await this.pricingSettings.findByRuleVersion(
+              row.pricing_rule_version,
+              client,
+            )
+            const deliveryCents = row.price_cents
+            const serviceFeeCents = computeServiceFeeCents(
+              deliveryCents,
+              input.merchantServiceFeeRateBpsOverride ?? settings.serviceFeeRateBps,
+            )
+            const earningResult = await client.query<OrderRow>(
+              `update orders
+              set driver_earning_cents = $1, delivery_cents = $1, service_fee_cents = $2
+            where id = $3
+            returning *`,
+              [deliveryCents, serviceFeeCents, row.id],
+            )
+            const earningRow = earningResult.rows[0]
+            if (earningRow === undefined) {
+              throw new Error('Order earning update did not return a row')
+            }
+            const order = mapOrder(earningRow)
+            await insertTransitionEvent(
+              client,
+              order,
+              null,
+              input.actor,
+              input.correlationId,
+              buildOrderCreatedEvent(order),
+            )
+            return order
+          })
+        } catch (error) {
+          if (!isPublicReferenceUniqueViolation(error) || attempt === 2) {
+            throw error
+          }
         }
-        // price_cents is generated by Postgres. Copy that persisted value rather
-        // than duplicating the pricing formula in application code.
-        const earningResult = await client.query<OrderRow>(
-          `update orders set driver_earning_cents = $1 where id = $2 returning *`,
-          [row.price_cents, row.id]
-        )
-        const earningRow = earningResult.rows[0]
-        if (earningRow === undefined) {
-          throw new Error('Order earning update did not return a row')
-        }
-        const order = mapOrder(earningRow)
-        await insertTransitionEvent(
-          client,
-          order,
-          null,
-          input.actor,
-          input.correlationId,
-          buildOrderCreatedEvent(order)
-        )
-        return order
-      })
+      }
     } catch (error) {
       if (isZoneForeignKeyViolation(error, 'orders_merchant_zone_fk')) {
         throw new InvalidZoneAssignmentError(
-          `Merchant ${input.merchantId} does not belong to zone ${input.zoneId}`
+          `Merchant ${input.merchantId} does not belong to zone ${input.zoneId}`,
         )
       }
       throw error
@@ -405,36 +473,58 @@ export class PostgresOrderRepository implements OrderRepository {
     return row === undefined ? null : mapOrder(row)
   }
 
-  public async findDispatchMetadata(orderId: string): Promise<import('../domain/dispatch.js').DispatchMetadata | null> {
-    const result = await this.pool.query<{ metadata: { dispatch_attempts?: unknown; dispatch_radius_km?: unknown; dispatch_failed?: unknown } }>(
-      'select metadata from orders where id = $1', [orderId]
-    )
+  public async findDispatchMetadata(
+    orderId: string,
+  ): Promise<import('../domain/dispatch.js').DispatchMetadata | null> {
+    const result = await this.pool.query<{
+      metadata: {
+        dispatch_attempts?: unknown
+        dispatch_radius_km?: unknown
+        dispatch_failed?: unknown
+      }
+    }>('select metadata from orders where id = $1', [orderId])
     const row = result.rows[0]
     if (row === undefined) return null
-    const attempts = Array.isArray(row.metadata.dispatch_attempts) ? row.metadata.dispatch_attempts : []
+    const attempts = Array.isArray(row.metadata.dispatch_attempts)
+      ? row.metadata.dispatch_attempts
+      : []
     return {
-      dispatchAttempts: attempts.filter((attempt): attempt is import('../domain/dispatch.js').DispatchAttempt =>
-        typeof attempt === 'object' && attempt !== null &&
-        typeof (attempt as { driverId?: unknown }).driverId === 'string' &&
-        ((attempt as { reason?: unknown }).reason === 'refused' || (attempt as { reason?: unknown }).reason === 'timeout') &&
-        typeof (attempt as { round?: unknown }).round === 'number' &&
-        typeof (attempt as { refusedAt?: unknown }).refusedAt === 'string'
+      dispatchAttempts: attempts.filter(
+        (attempt): attempt is import('../domain/dispatch.js').DispatchAttempt =>
+          typeof attempt === 'object' &&
+          attempt !== null &&
+          typeof (attempt as { driverId?: unknown }).driverId === 'string' &&
+          ((attempt as { reason?: unknown }).reason === 'refused' ||
+            (attempt as { reason?: unknown }).reason === 'timeout') &&
+          typeof (attempt as { round?: unknown }).round === 'number' &&
+          typeof (attempt as { refusedAt?: unknown }).refusedAt === 'string',
       ),
-      dispatchRadiusKm: typeof row.metadata.dispatch_radius_km === 'number' ? row.metadata.dispatch_radius_km : null,
-      dispatchFailed: row.metadata.dispatch_failed === true
+      dispatchRadiusKm:
+        typeof row.metadata.dispatch_radius_km === 'number'
+          ? row.metadata.dispatch_radius_km
+          : null,
+      dispatchFailed: row.metadata.dispatch_failed === true,
     }
   }
 
-  public async findStuckAvailableOrders(olderThanMinutes: number): Promise<{ orderId: string; merchantId: string }[]> {
-    const result = await this.pool.query<{ order_id: string; merchant_id: string }>(
+  public async findStuckAvailableOrders(
+    olderThanMinutes: number,
+  ): Promise<{ orderId: string; merchantId: string }[]> {
+    const result = await this.pool.query<{
+      order_id: string
+      merchant_id: string
+    }>(
       `select o.id as order_id, o.merchant_id
        from orders o
        where o.status = 'AVAILABLE' and o.driver_id is null
          and o.updated_at <= now() - ($1::text || ' minutes')::interval
          and coalesce((o.metadata->>'dispatch_failed')::boolean, false) = false`,
-      [olderThanMinutes]
+      [olderThanMinutes],
     )
-    return result.rows.map((row) => ({ orderId: row.order_id, merchantId: row.merchant_id }))
+    return result.rows.map((row) => ({
+      orderId: row.order_id,
+      merchantId: row.merchant_id,
+    }))
   }
 
   public async findTrackingByToken(token: string): Promise<OrderTrackingRecord | null> {
@@ -456,7 +546,7 @@ export class PostgresOrderRepository implements OrderRepository {
          limit 1
        ) location on o.status in ('ASSIGNED', 'COLLECTED')
        where o.tracking_token = $1`,
-      [token]
+      [token],
     )
     const row = result.rows[0]
     if (row === undefined) return null
@@ -466,7 +556,7 @@ export class PostgresOrderRepository implements OrderRepository {
       collectedAt: row.collected_at,
       completedAt: row.completed_at,
       durationS: row.duration_s,
-      driverPosition: row.lat === null || row.lng === null ? null : { lat: row.lat, lng: row.lng }
+      driverPosition: row.lat === null || row.lng === null ? null : { lat: row.lat, lng: row.lng },
     }
   }
 
@@ -474,7 +564,7 @@ export class PostgresOrderRepository implements OrderRepository {
     const result = await this.pool.query<{ tracking_token: string }>(
       `select tracking_token from orders
        where driver_id = $1 and status in ('ASSIGNED', 'COLLECTED')`,
-      [driverId]
+      [driverId],
     )
     return result.rows.map((row) => row.tracking_token)
   }
@@ -486,7 +576,7 @@ export class PostgresOrderRepository implements OrderRepository {
        left join drivers d on d.id = o.driver_id
        where o.merchant_id = $1
        order by o.created_at desc`,
-      [merchantId]
+      [merchantId],
     )
     const orders = ordersResult.rows.map(mapOrder)
     if (orders.length === 0) {
@@ -497,14 +587,14 @@ export class PostgresOrderRepository implements OrderRepository {
     const [eventsResult, proofsResult] = await Promise.all([
       this.pool.query<OrderEventRow>(
         'select * from order_events where order_id = any($1) order by created_at asc, id asc',
-        [orderIds]
+        [orderIds],
       ),
       this.pool.query<MerchantProofAssetRow>(
         `select order_id, kind, content, content_type, created_at
          from order_proof_assets
          where order_id = any($1) and expires_at > now()`,
-        [orderIds]
-      )
+        [orderIds],
+      ),
     ])
     const eventsByOrderId = new Map<string, OrderEvent[]>()
     for (const row of eventsResult.rows) {
@@ -523,12 +613,12 @@ export class PostgresOrderRepository implements OrderRepository {
         kind: proof.kind,
         contentBase64: proof.content.toString('base64'),
         contentType: proof.content_type,
-        createdAt: proof.created_at
+        createdAt: proof.created_at,
       })
     }
 
     return ordersResult.rows.map((row) =>
-      mapMerchantOrder(row, eventsByOrderId.get(row.id) ?? [], proofsByOrderId.get(row.id) ?? null)
+      mapMerchantOrder(row, eventsByOrderId.get(row.id) ?? [], proofsByOrderId.get(row.id) ?? null),
     )
   }
 
@@ -537,7 +627,7 @@ export class PostgresOrderRepository implements OrderRepository {
       `${driverOrderSelect}
        where o.zone_id = $1 and o.status = 'AVAILABLE' and o.driver_id is null
        order by o.created_at`,
-      [zoneId]
+      [zoneId],
     )
     return result.rows.map(mapDriverOrder)
   }
@@ -546,16 +636,19 @@ export class PostgresOrderRepository implements OrderRepository {
     const result = await this.pool.query<DriverOrderRow>(
       `${driverOrderSelect}
        where o.id = $1`,
-      [orderId]
+      [orderId],
     )
     const row = result.rows[0]
     return row === undefined ? null : mapDriverOrder(row)
   }
 
-  public async findOrderForDriver(orderId: string, driverId: string): Promise<OrderForDriver | null> {
+  public async findOrderForDriver(
+    orderId: string,
+    driverId: string,
+  ): Promise<OrderForDriver | null> {
     const result = await this.pool.query<OrderRow>(
       `select * from orders where id = $1 and driver_id = $2`,
-      [orderId, driverId]
+      [orderId, driverId],
     )
     const row = result.rows[0]
     return row === undefined ? null : mapOrderForDriver(row)
@@ -563,7 +656,7 @@ export class PostgresOrderRepository implements OrderRepository {
 
   public async findDriversWithActiveOrderForMerchant(
     merchantId: string,
-    targetPickupAt: Date
+    targetPickupAt: Date,
   ): Promise<{ driverId: string; orderId: string; pickupScheduledAt: Date | null }[]> {
     const result = await this.pool.query<{
       driver_id: string
@@ -577,19 +670,24 @@ export class PostgresOrderRepository implements OrderRepository {
          and status in ('ASSIGNED', 'COLLECTED')
          and pickup_scheduled_at is not null
          and abs(extract(epoch from (pickup_scheduled_at - $2::timestamptz))) < $3 * 60`,
-      [merchantId, targetPickupAt, GROUPAGE_WINDOW_MINUTES]
+      [merchantId, targetPickupAt, GROUPAGE_WINDOW_MINUTES],
     )
     return result.rows.map((row) => ({
       driverId: row.driver_id,
       orderId: row.order_id,
-      pickupScheduledAt: row.pickup_scheduled_at
+      pickupScheduledAt: row.pickup_scheduled_at,
     }))
   }
 
   public async recordDispatchAttempt(
     orderId: string,
-    attempt: { driverId: string; reason: 'refused' | 'timeout'; round: number; refusedAt: Date },
-    expectedVersion: number
+    attempt: {
+      driverId: string
+      reason: 'refused' | 'timeout'
+      round: number
+      refusedAt: Date
+    },
+    expectedVersion: number,
   ): Promise<Order> {
     const result = await this.pool.query<OrderRow>(
       `update orders
@@ -610,7 +708,14 @@ export class PostgresOrderRepository implements OrderRepository {
            updated_at = now()
        where id = $1 and version = $6
        returning *`,
-      [orderId, attempt.driverId, attempt.reason, attempt.round, attempt.refusedAt, expectedVersion]
+      [
+        orderId,
+        attempt.driverId,
+        attempt.reason,
+        attempt.round,
+        attempt.refusedAt,
+        expectedVersion,
+      ],
     )
     if (result.rowCount !== 1 || result.rows[0] === undefined) {
       throw new OrderConflictError(`Order ${orderId} dispatch metadata could not be updated`)
@@ -627,7 +732,7 @@ export class PostgresOrderRepository implements OrderRepository {
              updated_at = now()
          where id = $1 and version = $2
          returning *`,
-        [orderId, expectedVersion]
+        [orderId, expectedVersion],
       )
       const row = result.rows[0]
       if (result.rowCount !== 1 || row === undefined) {
@@ -636,7 +741,12 @@ export class PostgresOrderRepository implements OrderRepository {
       await client.query(
         `insert into outbox_event (event_type, aggregate_type, aggregate_id, aggregate_version, payload, correlation_id)
          values ('order.dispatch_failed.v1', 'order', $1, $2, $3::jsonb, $4)`,
-        [row.id, row.version, JSON.stringify({ orderId: row.id, merchantId: row.merchant_id }), randomUUID()]
+        [
+          row.id,
+          row.version,
+          JSON.stringify({ orderId: row.id, merchantId: row.merchant_id }),
+          randomUUID(),
+        ],
       )
       return mapOrder(row)
     })
@@ -647,7 +757,7 @@ export class PostgresOrderRepository implements OrderRepository {
       `${driverOrderSelect}
        where o.driver_id = $1 and o.status in ('ASSIGNED', 'COLLECTED', 'RETURNING')
        order by assigned_at asc, created_at asc`,
-      [driverId]
+      [driverId],
     )
     return result.rows.map(mapDriverOrder)
   }
@@ -658,7 +768,7 @@ export class PostgresOrderRepository implements OrderRepository {
        where o.driver_id = $1 and o.status in ('COMPLETED', 'RETURNED', 'CANCELLED')
        order by o.updated_at desc
        limit 30`,
-      [driverId]
+      [driverId],
     )
     return result.rows.map(mapDriverHistoryOrder)
   }
@@ -673,7 +783,7 @@ export class PostgresOrderRepository implements OrderRepository {
       throw new Error('listSettleableOrders: finalizedFrom doit précéder finalizedTo')
     }
     const result = await this.pool.query<SettleableOrderRow>(
-      `select o.id, o.merchant_id, o.driver_id, o.driver_earning_cents, o.price_cents,
+      `select o.id, o.merchant_id, o.driver_id, o.delivery_cents, o.service_fee_cents, o.pricing_rule_version,
               o.status::text as final_status, o.created_at, f.finalized_at
          from orders o
          cross join lateral (
@@ -688,17 +798,18 @@ export class PostgresOrderRepository implements OrderRepository {
           and f.finalized_at >= $1
           and f.finalized_at < $2
         order by f.finalized_at, o.id`,
-      [input.finalizedFrom, input.finalizedTo, input.createdNotBefore]
+      [input.finalizedFrom, input.finalizedTo, input.createdNotBefore],
     )
     return result.rows.map((row): SettleableOrder => ({
       orderId: row.id,
       merchantId: row.merchant_id,
       driverId: row.driver_id,
-      driverEarningCents: row.driver_earning_cents,
-      merchantPriceCents: row.price_cents,
+      deliveryCents: row.delivery_cents,
+      serviceFeeCents: row.service_fee_cents,
+      pricingRuleVersion: row.pricing_rule_version,
       finalStatus: row.final_status,
       createdAt: row.created_at,
-      finalizedAt: row.finalized_at
+      finalizedAt: row.finalized_at,
     }))
   }
 
@@ -721,7 +832,7 @@ export class PostgresOrderRepository implements OrderRepository {
           and o.created_at < $3
           and f.finalized_at >= $1
           and f.finalized_at < $2`,
-      [input.finalizedFrom, input.finalizedTo, input.createdBefore]
+      [input.finalizedFrom, input.finalizedTo, input.createdBefore],
     )
     return Number(result.rows[0]?.count ?? 0)
   }
@@ -733,7 +844,7 @@ export class PostgresOrderRepository implements OrderRepository {
                 count(*)::text as completed_order_count
          from orders
          where driver_id = $1 and status = 'COMPLETED'`,
-        [driverId]
+        [driverId],
       ),
       this.pool.query<DriverCompletedOrderEarningRow>(
         `select id, completed_at, driver_earning_cents, delivery_address
@@ -741,8 +852,8 @@ export class PostgresOrderRepository implements OrderRepository {
          where driver_id = $1 and status = 'COMPLETED'
          order by completed_at desc
          limit 20`,
-        [driverId]
-      )
+        [driverId],
+      ),
     ])
     const summary = summaryResult.rows[0]
     if (summary === undefined) {
@@ -759,8 +870,8 @@ export class PostgresOrderRepository implements OrderRepository {
         id: row.id,
         completedAt: row.completed_at,
         earningCents: row.driver_earning_cents,
-        deliveryAddress: row.delivery_address
-      }))
+        deliveryAddress: row.delivery_address,
+      })),
     }
   }
 
@@ -769,7 +880,7 @@ export class PostgresOrderRepository implements OrderRepository {
     driverId: string,
     expectedVersion: number,
     actor: Actor,
-    correlationId: string
+    correlationId: string,
   ): Promise<Order> {
     try {
       return await inTransaction(this.pool, async (client) => {
@@ -778,10 +889,12 @@ export class PostgresOrderRepository implements OrderRepository {
            set driver_id = $1, status = 'ASSIGNED', assigned_at = now(), updated_at = now(), version = version + 1
            where id = $2 and status = 'AVAILABLE' and driver_id is null and version = $3
            returning *`,
-          [driverId, orderId, expectedVersion]
+          [driverId, orderId, expectedVersion],
         )
         if (result.rowCount !== 1 || result.rows[0] === undefined) {
-          throw new OrderConflictError(`Order ${orderId} could not transition AVAILABLE -> ASSIGNED`)
+          throw new OrderConflictError(
+            `Order ${orderId} could not transition AVAILABLE -> ASSIGNED`,
+          )
         }
         const order = mapOrder(result.rows[0])
         await insertTransitionEvent(
@@ -790,13 +903,15 @@ export class PostgresOrderRepository implements OrderRepository {
           'AVAILABLE',
           actor,
           correlationId,
-          buildOrderAssignedEvent(order)
+          buildOrderAssignedEvent(order),
         )
         return order
       })
     } catch (error) {
       if (isZoneForeignKeyViolation(error, 'orders_driver_zone_fk')) {
-        throw new InvalidZoneAssignmentError(`Driver ${driverId} does not belong to the zone of order ${orderId}`)
+        throw new InvalidZoneAssignmentError(
+          `Driver ${driverId} does not belong to the zone of order ${orderId}`,
+        )
       }
       throw error
     }
@@ -807,7 +922,7 @@ export class PostgresOrderRepository implements OrderRepository {
     driverId: string,
     expectedVersion: number,
     actor: Actor,
-    correlationId: string
+    correlationId: string,
   ): Promise<Order> {
     // Calculé AVANT l'ouverture de la transaction : bcrypt.hash (CPU-bound,
     // pur JS via bcryptjs) peut dépasser 5s sous forte contention CPU
@@ -828,13 +943,28 @@ export class PostgresOrderRepository implements OrderRepository {
              delivery_code_failed_attempts = 0, delivery_code_locked_at = null
          where id = $1 and driver_id = $2 and status = 'ASSIGNED' and version = $3
          returning *`,
-        [orderId, driverId, expectedVersion, deliveryCode.hash, deliveryCode.plain, deliveryCode.generatedAt, deliveryCode.expiresAt]
+        [
+          orderId,
+          driverId,
+          expectedVersion,
+          deliveryCode.hash,
+          deliveryCode.plain,
+          deliveryCode.generatedAt,
+          deliveryCode.expiresAt,
+        ],
       )
       if (result.rowCount !== 1 || result.rows[0] === undefined) {
         throw new OrderConflictError(`Order ${orderId} could not transition ASSIGNED -> COLLECTED`)
       }
       const order = mapOrder(result.rows[0])
-      await insertTransitionEvent(client, order, 'ASSIGNED', actor, correlationId, buildOrderCollectedEvent(order))
+      await insertTransitionEvent(
+        client,
+        order,
+        'ASSIGNED',
+        actor,
+        correlationId,
+        buildOrderCollectedEvent(order),
+      )
       return order
     })
   }
@@ -845,13 +975,20 @@ export class PostgresOrderRepository implements OrderRepository {
     expectedVersion: number,
     proof: { method: 'code'; code: string } | ProofOfDeliveryAsset,
     actor: Actor,
-    correlationId: string
+    correlationId: string,
   ): Promise<Order> {
-    return this.completeInTransaction(orderId, driverId, expectedVersion, proof, actor, correlationId)
+    return this.completeInTransaction(
+      orderId,
+      driverId,
+      expectedVersion,
+      proof,
+      actor,
+      correlationId,
+    )
   }
 
   public async verifyDeliveryCodeForCompletion(
-    input: VerifyDeliveryCodeForCompletionInput
+    input: VerifyDeliveryCodeForCompletionInput,
   ): Promise<{ verified: true }> {
     const result = await inTransaction(this.pool, async (client) => {
       const lockedRow = await this.lockCollectedOrderForCompletion(client, input)
@@ -867,7 +1004,7 @@ export class PostgresOrderRepository implements OrderRepository {
 
   public async completeCollectedCashOnDeliveryInTransaction(
     client: PoolClient,
-    input: CompleteCollectedCashOnDeliveryCommand
+    input: CompleteCollectedCashOnDeliveryCommand,
   ): Promise<Order> {
     const lockedRow = await this.lockCollectedOrderForCompletion(client, input)
     if (!lockedRow.cash_on_delivery_required) {
@@ -879,13 +1016,22 @@ export class PostgresOrderRepository implements OrderRepository {
            delivery_proof_method = 'code', delivery_code_plain = null, cash_on_delivery_collected_at = now()
        where id = $1 and driver_id = $2 and status = 'COLLECTED' and version = $3
        returning *`,
-      [input.orderId, input.driverId, input.expectedVersion]
+      [input.orderId, input.driverId, input.expectedVersion],
     )
     if (result.rowCount !== 1 || result.rows[0] === undefined) {
-      throw new OrderConflictError(`Order ${input.orderId} could not transition COLLECTED -> COMPLETED`)
+      throw new OrderConflictError(
+        `Order ${input.orderId} could not transition COLLECTED -> COMPLETED`,
+      )
     }
     const order = mapOrder(result.rows[0])
-    await insertTransitionEvent(client, order, 'COLLECTED', input.actor, input.correlationId, buildOrderCompletedEvent(order))
+    await insertTransitionEvent(
+      client,
+      order,
+      'COLLECTED',
+      input.actor,
+      input.correlationId,
+      buildOrderCompletedEvent(order),
+    )
     return order
   }
 
@@ -895,10 +1041,14 @@ export class PostgresOrderRepository implements OrderRepository {
     expectedVersion: number,
     proof: { method: 'code'; code: string } | ProofOfDeliveryAsset,
     actor: Actor,
-    correlationId: string
+    correlationId: string,
   ): Promise<Order> {
     const result = await inTransaction(this.pool, async (client) => {
-      const lockedRow = await this.lockCollectedOrderForCompletion(client, { orderId, driverId, expectedVersion })
+      const lockedRow = await this.lockCollectedOrderForCompletion(client, {
+        orderId,
+        driverId,
+        expectedVersion,
+      })
       if (lockedRow.cash_on_delivery_required && lockedRow.cash_on_delivery_collected_at === null) {
         throw new CashOnDeliveryPaymentRequiredError()
       }
@@ -912,7 +1062,7 @@ export class PostgresOrderRepository implements OrderRepository {
              delivery_proof_method = $4, delivery_code_plain = null
          where id = $1 and driver_id = $2 and status = 'COLLECTED' and version = $3
          returning *`,
-        [orderId, driverId, expectedVersion, proof.method]
+        [orderId, driverId, expectedVersion, proof.method],
       )
       if (result.rowCount !== 1 || result.rows[0] === undefined) {
         throw new OrderConflictError(`Order ${orderId} could not transition COLLECTED -> COMPLETED`)
@@ -922,10 +1072,17 @@ export class PostgresOrderRepository implements OrderRepository {
         await client.query(
           `insert into order_proof_assets (order_id, kind, content, content_type, expires_at)
            values ($1, $2, $3, $4, now() + interval '7 days')`,
-          [order.id, proof.method, proof.content, proof.contentType]
+          [order.id, proof.method, proof.content, proof.contentType],
         )
       }
-      await insertTransitionEvent(client, order, 'COLLECTED', actor, correlationId, buildOrderCompletedEvent(order))
+      await insertTransitionEvent(
+        client,
+        order,
+        'COLLECTED',
+        actor,
+        correlationId,
+        buildOrderCompletedEvent(order),
+      )
       return { order }
     })
     if ('error' in result) {
@@ -936,15 +1093,21 @@ export class PostgresOrderRepository implements OrderRepository {
 
   private async lockCollectedOrderForCompletion(
     client: PoolClient,
-    input: Pick<VerifyDeliveryCodeForCompletionInput, 'orderId' | 'driverId' | 'expectedVersion'>
+    input: Pick<VerifyDeliveryCodeForCompletionInput, 'orderId' | 'driverId' | 'expectedVersion'>,
   ): Promise<OrderRow> {
-    const locked = await client.query<OrderRow>('select * from orders where id = $1 for update', [input.orderId])
+    const locked = await client.query<OrderRow>('select * from orders where id = $1 for update', [
+      input.orderId,
+    ])
     const lockedRow = locked.rows[0]
     if (
-      lockedRow === undefined || lockedRow.driver_id !== input.driverId || lockedRow.status !== 'COLLECTED' ||
+      lockedRow === undefined ||
+      lockedRow.driver_id !== input.driverId ||
+      lockedRow.status !== 'COLLECTED' ||
       lockedRow.version !== input.expectedVersion
     ) {
-      throw new OrderConflictError(`Order ${input.orderId} could not transition COLLECTED -> COMPLETED`)
+      throw new OrderConflictError(
+        `Order ${input.orderId} could not transition COLLECTED -> COMPLETED`,
+      )
     }
     return lockedRow
   }
@@ -952,10 +1115,11 @@ export class PostgresOrderRepository implements OrderRepository {
   private async verifyLockedDeliveryCode(
     client: PoolClient,
     lockedRow: OrderRow,
-    code: string
+    code: string,
   ): Promise<DeliveryCodeExpiredError | DeliveryCodeInvalidError | DeliveryCodeLockedError | null> {
     if (
-      lockedRow.delivery_code_hash === null || lockedRow.delivery_code_expires_at === null ||
+      lockedRow.delivery_code_hash === null ||
+      lockedRow.delivery_code_expires_at === null ||
       lockedRow.delivery_code_expires_at <= new Date()
     ) {
       return new DeliveryCodeExpiredError()
@@ -971,7 +1135,7 @@ export class PostgresOrderRepository implements OrderRepository {
       `update orders set delivery_code_failed_attempts = $2::smallint,
        delivery_code_locked_at = case when $2::smallint >= 3 then now() else delivery_code_locked_at end,
        updated_at = now() where id = $1`,
-      [lockedRow.id, failedAttempts]
+      [lockedRow.id, failedAttempts],
     )
     return new DeliveryCodeInvalidError(3 - failedAttempts)
   }
@@ -981,13 +1145,17 @@ export class PostgresOrderRepository implements OrderRepository {
     driverId: string,
     expectedVersion: number,
     actor: Actor,
-    correlationId: string
+    correlationId: string,
   ): Promise<Order> {
     return inTransaction(this.pool, async (client) => {
-      const locked = await client.query<OrderRow>('select * from orders where id = $1 for update', [orderId])
+      const locked = await client.query<OrderRow>('select * from orders where id = $1 for update', [
+        orderId,
+      ])
       const lockedRow = locked.rows[0]
       if (
-        lockedRow === undefined || lockedRow.driver_id !== driverId || lockedRow.status !== 'COLLECTED' ||
+        lockedRow === undefined ||
+        lockedRow.driver_id !== driverId ||
+        lockedRow.status !== 'COLLECTED' ||
         lockedRow.version !== expectedVersion
       ) {
         throw new OrderConflictError(`Order ${orderId} could not transition COLLECTED -> RETURNING`)
@@ -998,13 +1166,20 @@ export class PostgresOrderRepository implements OrderRepository {
       const result = await client.query<OrderRow>(
         `update orders set status = 'RETURNING', updated_at = now(), version = version + 1, delivery_code_plain = null
          where id = $1 and driver_id = $2 and status = 'COLLECTED' and version = $3 returning *`,
-        [orderId, driverId, expectedVersion]
+        [orderId, driverId, expectedVersion],
       )
       if (result.rowCount !== 1 || result.rows[0] === undefined) {
         throw new OrderConflictError(`Order ${orderId} could not transition COLLECTED -> RETURNING`)
       }
       const order = mapOrder(result.rows[0])
-      await insertTransitionEvent(client, order, 'COLLECTED', actor, correlationId, buildOrderReturningEvent(order))
+      await insertTransitionEvent(
+        client,
+        order,
+        'COLLECTED',
+        actor,
+        correlationId,
+        buildOrderReturningEvent(order),
+      )
       return order
     })
   }
@@ -1014,19 +1189,26 @@ export class PostgresOrderRepository implements OrderRepository {
     driverId: string,
     expectedVersion: number,
     actor: Actor,
-    correlationId: string
+    correlationId: string,
   ): Promise<Order> {
     return inTransaction(this.pool, async (client) => {
       const result = await client.query<OrderRow>(
         `update orders set status = 'RETURNED', updated_at = now(), version = version + 1
          where id = $1 and driver_id = $2 and status = 'RETURNING' and version = $3 returning *`,
-        [orderId, driverId, expectedVersion]
+        [orderId, driverId, expectedVersion],
       )
       if (result.rowCount !== 1 || result.rows[0] === undefined) {
         throw new OrderConflictError(`Order ${orderId} could not transition RETURNING -> RETURNED`)
       }
       const order = mapOrder(result.rows[0])
-      await insertTransitionEvent(client, order, 'RETURNING', actor, correlationId, buildOrderReturnedEvent(order))
+      await insertTransitionEvent(
+        client,
+        order,
+        'RETURNING',
+        actor,
+        correlationId,
+        buildOrderReturnedEvent(order),
+      )
       return order
     })
   }

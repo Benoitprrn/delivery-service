@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { driverStatementDisplayState, expectedPaymentAt, incidentOpenCents, merchantAttemptOutcome, merchantDisplayState, summarizeDriverPeriod, sumTotals } from '../../../src/modules/settlements/domain/settlement-display.js'
 
 const statement = (overrides = {}) => ({ status: 'waiting_sepa' as const, dueCents: 100, paidCents: 0, holdReason: null, settlementStatus: 'x', debit: null, incidentOpen: false, ...overrides })
-const merchant = (overrides = {}) => ({ merchantSettlementId: 'id', periodStart: new Date('2026-01-01Z'), periodEnd: new Date('2026-01-08Z'), amountCents: 1, deliveriesCount: 1, status: 'closed', preNotification: null, attempts: [], incidents: [], openReceivablesCents: 0, retryRequested: false, ...overrides })
+const merchant = (overrides = {}) => ({ merchantSettlementId: 'id', periodStart: new Date('2026-01-01Z'), periodEnd: new Date('2026-01-08Z'), amountCents: 1, deliveryCents: 1, serviceFeeCents: 0, deliveriesCount: 1, status: 'closed', preNotification: null, attempts: [], incidents: [], openReceivablesCents: 0, retryRequested: false, ...overrides })
 
 describe('settlement display', () => {
   it('applies driver priorities, including technical holds', () => {

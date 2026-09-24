@@ -195,7 +195,7 @@ export default function OrdersPage() {
 
   const normalizedSearch = searchQuery.trim().toLowerCase()
   const visibleOrders = useMemo(
-    () => ordersByTab[activeTab].filter((order) => order.id.slice(-6).toLowerCase().includes(normalizedSearch)),
+    () => ordersByTab[activeTab].filter((order) => order.publicReference.includes(normalizedSearch)),
     [activeTab, normalizedSearch, ordersByTab]
   )
 

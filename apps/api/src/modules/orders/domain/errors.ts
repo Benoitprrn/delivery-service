@@ -97,3 +97,10 @@ export class DriverPayoutAccountNotReadyError extends Error {
     this.name = 'DriverPayoutAccountNotReady'
   }
 }
+
+export class DriverInvoiceInformationNotReadyError extends Error {
+  public constructor(message = 'The driver invoice information must be complete before taking deliveries') {
+    super(message)
+    this.name = 'DriverInvoiceInformationNotReady'
+  }
+}

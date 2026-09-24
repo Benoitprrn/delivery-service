@@ -14,13 +14,15 @@ function disputeStatus(status: string): IncidentStatus {
   return 'open'
 }
 
-export function assessChargeIncidents(view: ChargeIncidentView): ChargeIncidentAssessment {
+export function assessChargeIncidents(view: ChargeIncidentView, knownServiceRefundCents = 0): ChargeIncidentAssessment {
   validAmount(view.chargeAmountCents); validAmount(view.amountRefundedCents)
+  validAmount(knownServiceRefundCents)
   if (view.amountRefundedCents > view.chargeAmountCents) throw new InvalidAmountError()
+  const unexplainedRefundCents = Math.max(0, view.amountRefundedCents - knownServiceRefundCents)
   const incidents: ChargeIncident[] = []
   const dispute = view.dispute
   if (dispute !== null) { validAmount(dispute.amountCents); incidents.push({ kind: 'dispute', externalId: dispute.id, amountCents: dispute.amountCents, status: disputeStatus(dispute.status), reason: dispute.reason }) }
-  if (view.amountRefundedCents > 0 && dispute?.status !== 'charge_refunded') incidents.push({ kind: 'refund', externalId: `refund:${view.chargeId}`, amountCents: view.amountRefundedCents, status: 'lost', reason: null })
+  if (unexplainedRefundCents > 0 && dispute?.status !== 'charge_refunded') incidents.push({ kind: 'refund', externalId: `refund:${view.chargeId}`, amountCents: unexplainedRefundCents, status: 'lost', reason: null })
   const owed = incidents.reduce((sum, incident) => sum + (incident.kind === 'refund' || incident.status === 'open' || incident.status === 'lost' ? incident.amountCents : 0), 0)
   return { incidents, chargeUsable: !incidents.some((incident) => incident.kind === 'refund' || incident.status === 'open' || incident.status === 'lost'), restaurantOwedCents: Math.max(0, Math.min(view.chargeAmountCents, owed)) }
 }

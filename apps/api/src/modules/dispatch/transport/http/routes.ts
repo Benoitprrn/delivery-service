@@ -1,10 +1,18 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { ZodError } from 'zod'
 import { DispatchOfferAccessDeniedError, DispatchOfferConflictError, DispatchOfferNotFoundError, DispatchPlannerUnavailableError } from '../../domain/errors.js'
-import type { createDispatchModule } from '../../public.js'
+import type { AcceptDispatchOfferUseCase } from '../../application/accept-dispatch-offer.js'
+import type { GetDispatchOfferUseCase } from '../../application/get-dispatch-offer.js'
+import type { RejectDispatchOfferUseCase } from '../../application/reject-dispatch-offer.js'
 import { acceptDispatchOfferBodySchema, dispatchOfferParamsSchema, rejectDispatchOfferBodySchema } from './schemas.js'
 
-type DispatchHttpRoutesOptions = { dispatch: Pick<ReturnType<typeof createDispatchModule>, 'acceptOffer' | 'getOffer' | 'rejectOffer'> }
+type DispatchHttpRoutesOptions = {
+  dispatch: {
+    acceptOffer: AcceptDispatchOfferUseCase['execute']
+    getOffer: GetDispatchOfferUseCase['execute']
+    rejectOffer: RejectDispatchOfferUseCase['execute']
+  }
+}
 
 function sendMappedError(request: FastifyRequest, reply: FastifyReply, error: unknown): FastifyReply {
   const statusCode = error instanceof ZodError ? 400

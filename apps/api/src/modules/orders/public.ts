@@ -5,6 +5,7 @@ import type { DriverCapacityWriter } from './ports/driver-capacity-writer.js'
 import type { CardPaymentsReadiness } from './ports/card-payments-readiness.js'
 import type { MerchantSettlementReadinessReader } from './ports/merchant-settlement-readiness.js'
 import type { DriverEligibility } from './ports/driver-eligibility.js'
+import type { DriverInvoiceReadiness } from './ports/driver-invoice-readiness.js'
 import { AssignOrderUseCase } from './application/assign-order.js'
 import { CollectOrderUseCase } from './application/collect-order.js'
 import { CompleteOrderUseCase } from './application/complete-order.js'
@@ -22,6 +23,7 @@ import { ListAvailableOrdersUseCase } from './application/list-available-orders.
 import { OsrmRoutingProvider } from './infrastructure/osrm-routing-provider.js'
 import { SystemClock } from './infrastructure/system-clock.js'
 import { PostgresOrderRepository } from './infrastructure/postgres-order-repository.js'
+import { createPricingSettingsReader } from '../pricing/public.js'
 export { registerOrderHttpRoutes } from './transport/http/routes.js'
 
 export type { Actor, AvailableOrder, DeliveryProofMethod, DriverHistoryOrder, DriverOrder, MerchantOrder, MerchantProofAsset, Order, OrderForDriver } from './domain/order.js'
@@ -44,6 +46,7 @@ export {
   CashOnDeliveryAlreadyCollectedError,
   CardPaymentsNotReadyError,
   DriverPayoutAccountNotReadyError,
+  DriverInvoiceInformationNotReadyError,
   MerchantPaymentSetupIncompleteError,
   CashOnDeliveryNotRequiredError,
   CashOnDeliveryPaymentRequiredError,
@@ -62,6 +65,8 @@ export type { DriverCapacityWriter } from './ports/driver-capacity-writer.js'
 export { createMerchantSettlementReadiness } from './infrastructure/merchant-settlement-readiness.js'
 export type { MerchantSettlementReadiness, MerchantSettlementReadinessReader } from './ports/merchant-settlement-readiness.js'
 export type { DriverEligibility } from './ports/driver-eligibility.js'
+export type { DriverInvoiceReadiness } from './ports/driver-invoice-readiness.js'
+export { PostgresDriverInvoiceReadinessReader } from './infrastructure/postgres-driver-invoice-readiness.js'
 export { GROUPAGE_WINDOW_MINUTES } from './domain/dispatch.js'
 export type { DispatchAttempt, DispatchMetadata } from './domain/dispatch.js'
 export { InvalidProofOfDeliveryError } from './domain/proof-of-delivery.js'
@@ -81,20 +86,22 @@ export function createOrdersModule(
   // Défaut permissif réservé aux tests du module : `app.ts` injecte toujours la vraie garde (fail-closed).
   cardPaymentsReadiness: CardPaymentsReadiness = { isReady: async () => true },
   settlementReadiness: MerchantSettlementReadinessReader = { check: async () => ({ ready: true }) },
-  driverEligibility: DriverEligibility = { isEligible: async () => true }
+  driverEligibility: DriverEligibility = { isEligible: async () => true },
+  driverInvoiceReadiness: DriverInvoiceReadiness = { isReady: async () => true }
 ) {
-  const repository = new PostgresOrderRepository(pool)
+  const pricingSettings = createPricingSettingsReader(pool)
+  const repository = new PostgresOrderRepository(pool, pricingSettings)
   const routingProvider = new OsrmRoutingProvider(osrmBaseUrl)
   const createOrderUseCase = new CreateOrderUseCase(repository, routingProvider, new SystemClock(), cardPaymentsReadiness, settlementReadiness)
-  const estimateOrderUseCase = new EstimateOrderUseCase({ geocode }, routingProvider)
+  const estimateOrderUseCase = new EstimateOrderUseCase({ geocode }, routingProvider, pricingSettings)
   const getMerchantOrdersUseCase = new GetMerchantOrdersUseCase(repository)
   const getDriverOrdersUseCase = new GetDriverOrdersUseCase(repository)
   const getDriverHistoryUseCase = new GetDriverHistoryUseCase(repository)
   const getDriverEarningsUseCase = new GetDriverEarningsUseCase(repository)
   const getOrderRouteUseCase = new GetOrderRouteUseCase(repository, routingProvider)
   const getOrderTrackingUseCase = new GetOrderTrackingUseCase(repository)
-  const listAvailableOrdersUseCase = new ListAvailableOrdersUseCase(repository, availabilityReader, driverEligibility)
-  const assignOrderUseCase = new AssignOrderUseCase(repository, capacityWriter, driverEligibility)
+  const listAvailableOrdersUseCase = new ListAvailableOrdersUseCase(repository, availabilityReader, driverEligibility, driverInvoiceReadiness)
+  const assignOrderUseCase = new AssignOrderUseCase(repository, capacityWriter, driverEligibility, driverInvoiceReadiness)
   const collectOrderUseCase = new CollectOrderUseCase(repository)
   const completeOrderUseCase = new CompleteOrderUseCase(repository, capacityWriter)
   const verifyDeliveryCodeForCompletionUseCase = new VerifyDeliveryCodeForCompletionUseCase(repository)

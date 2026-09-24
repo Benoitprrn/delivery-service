@@ -1,13 +1,13 @@
 import Fastify from 'fastify'
 import { describe, expect, it, vi } from 'vitest'
-import { registerAuthHttpRoutes } from '../../src/modules/auth/public.js'
+import { registerMerchantHttpRoutes } from '../../src/modules/merchants/public.js'
 import { AccountAlreadyExistsError } from '../../src/modules/auth/domain/auth-admin-errors.js'
 
 function buildSignupApp(provisionMerchant = vi.fn(async () => ({ merchantId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', onboardingCompleted: false as const }))) {
   const app = Fastify()
   app.decorateRequest('correlationId', '')
   app.addHook('onRequest', async (request) => { request.correlationId = 'signup-correlation' })
-  return app.register(registerAuthHttpRoutes, { merchants: { provisionMerchant } } as never).then(() => ({ app, provisionMerchant }))
+  return app.register(registerMerchantHttpRoutes, { merchants: { provisionMerchant } } as never).then(() => ({ app, provisionMerchant }))
 }
 
 describe('merchant signup HTTP endpoint', () => {

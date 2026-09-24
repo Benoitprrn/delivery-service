@@ -76,7 +76,10 @@ npm run lint         # lint de tous les workspaces
 - Règles web détaillées (routes, layout) → `apps/web/CLAUDE.md`
 - Règles mobile détaillées (écrans, dev build) → `apps/mobile/CLAUDE.md`
 - États commande et transitions autorisées → `docs/adr/0001-order-states.md`
-- Formule de tarification → `docs/adr/0002-pricing-formula.md`
+- Formule de tarification → `docs/adr/0002-pricing-formula.md` (formule horokilométrique,
+  amendée par ADR 0005 sur le calcul des frais)
+- Modèle économique livraison/frais de service (additif) → `docs/adr/0005-delivery-service-fee-model.md`,
+  chantier en cours → `docs/work/pricing-service-fee-plan.md`
 
 ## État du projet
 
@@ -170,7 +173,7 @@ règlements restaurant, débits SEPA, pay-runs, Transfers `source_transaction`, 
 créances, comptes Connect livreur (`individual` ou `company`), payouts observés,
 réconciliation ; `0034` fige `driver_earning_cents`/`distance_m`/`duration_s` des commandes
 (migrations `0030`–`0034` appliquées à la base de dev le 2026-09-21).
-La base porte les invariants (frais par ligne `floor`, `go_live_at`, aucun Transfer sans débit
+La base porte les invariants (montants de ligne figés, `go_live_at`, aucun Transfer sans débit
 `succeeded` ni avant `payrun_at`, Σ Transfers ≤ dû, `paid_cents` = Σ Transfers réussis). Le domaine
 pur est dans `modules/settlements/domain` ; `orders` expose `listSettleableOrders` et
 `countPreGoLiveFinalizedOrders`. La clôture hebdomadaire (R40) est un worker PostgreSQL (`SETTLEMENT_CLOSE_WORKER_ENABLED`,
@@ -228,3 +231,36 @@ environnement de test seulement), `GET /api/v1/merchants/me/settlements[/:id]` (
 `GET /api/v1/admin/settlements/overview` + `POST /api/v1/admin/reversals[/:id/approve|reject]` (rôle `admin`, double approbation). L'app livreur affiche « Mes paiements »
 (`apps/mobile`, onglet Compte > Wallet, détail par période) ; le web restaurant a `/merchant/settlements` et le back-office minimal `/admin/settlements`
 (relance de débit, reversals, incidents, créances, constats, statements bloqués, événements en échec) réservé au rôle `admin` (Supabase `app_metadata.role`).
+
+Correction du modèle économique livraison/frais de service (chantier SF, ADR 0005, plan
+`docs/work/pricing-service-fee-plan.md`) : CLOS le 2026-09-23, SF1-SF13 terminées (groupage
+tarifaire avancé, retour, F10 facturation restent des chantiers séparés, hors périmètre tant
+que non explicitement relancés — le design actuel ne les empêche pas, voir plan §3). Le
+modèle validé est additif —
+`delivery_cents` (100 % livreur) + `service_fee_cents` (100 % Locadely, ajouté au prix
+restaurant, jamais soustrait au livreur) — et remplace le modèle Phase 1 où les « frais
+Locadely » étaient une commission de 20 % prélevée sur le gain du livreur. Le ledger
+(`supabase/migrations/0043_settlement_ledger_additive_model.sql`) copie sur chaque ligne
+`orders.delivery_cents`/`service_fee_cents`/`pricing_rule_version` ; `due_cents` est la somme
+des livraisons du livreur ; le règlement restaurant fige `amount_cents = driver_amount_cents
++ service_fee_cents`. Débit restaurant (R50), Transfer livreur (R60) et reversals/incidents/
+réconciliation (R61/R70) vérifiés corrects sous le nouveau modèle sans changement de logique
+(SF7-SF9). Le web commerçant (`/merchant/new`, détail commande, `/merchant/settlements`,
+SF10) affiche le total HT en premier avec un détail livraison/service dépliable — jamais une
+soustraction présentée au livreur. L'app livreur (SF11) n'affiche jamais que son propre gain
+plein (`deliveryCents`), jamais `service_fee_cents`, jamais un montant net après une
+commission fictive ; « cette semaine » a une source unique (`GET /api/v1/drivers/me/
+settlements`), la carte Wallet de l'accueil et l'écran détaillé ne peuvent plus diverger.
+`pricing_settings` (migration `0040_pricing_settings.sql`) porte les paramètres tarifaires
+(collecte, €/km, €/min, minimum, taux de service par défaut), append-only et versionnés
+(`rule_version`) : un changement de tarif ne recalcule jamais une commande déjà créée.
+`orders.price_cents` n'est plus une colonne générée depuis `0042_order_pricing_model.sql` :
+calculée et figée à l'insertion par trigger PostgreSQL lisant `pricing_settings`.
+`orders.delivery_cents`/`orders.service_fee_cents`/`orders.pricing_rule_version` sont
+désormais alimentées à la création de chaque nouvelle commande (SF5, backend Codex, relu et
+vérifié par Claude Code) : le livreur reçoit 100 % de `delivery_cents`, le frais de service
+est additif, le taux effectif (override restaurant via `merchants.service_fee_rate_bps_override`
+sinon taux par défaut) est résolu depuis la règle tarifaire réellement figée sur la commande,
+jamais recalculé. Détail complet, invariants, répartition Claude Code/Codex, état par étape →
+`docs/work/pricing-service-fee-plan.md` (source de vérité du chantier, à tenir à jour à
+chaque tranche).

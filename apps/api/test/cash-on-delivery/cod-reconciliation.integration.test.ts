@@ -86,7 +86,7 @@ function buildCompletion(fake: FakeConnectPaymentsProvider, ordersPort: OrdersPo
     async () => ({
       merchantId, siret: '1', siren: '1', legalName: 'M',
       legalAddress: { line1: '1 rue', line2: null, postalCode: '01000', city: 'Bourg', countryCode: 'FR', communeCode: null },
-      billingAddress: null, vatNumber: null, sireneVerificationStatus: 'verified', sireneVerifiedAt: null
+      billingAddress: null, vatNumber: null, buyerReference: null, sireneVerificationStatus: 'verified', sireneVerifiedAt: null
     }),
     true
   )

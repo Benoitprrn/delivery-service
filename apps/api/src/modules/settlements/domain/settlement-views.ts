@@ -49,8 +49,8 @@ export type DriverPeriodView = {
 export type DriverSettlementsResponse = {
   generatedAt: string
   identityVisible: boolean
-  /** Semaine en cours, NON clôturée : estimation nette (gain − 20 % par course) ; null si `go_live_at` absent ou aucune course. */
-  currentWeek: { periodStart: string; periodEnd: string; deliveries: number; estimatedNetCents: number; closesAt: string } | null
+  /** Semaine en cours, NON clôturée : estimation des gains livreur ; null si `go_live_at` absent ou aucune course. */
+  currentWeek: { periodStart: string; periodEnd: string; deliveries: number; estimatedAmountCents: number; closesAt: string } | null
   totals: { totalCents: number; sentCents: number; pendingCents: number; unpaidByRestaurantCents: number }
   periods: DriverPeriodView[]
 }
@@ -71,6 +71,10 @@ export type MerchantSettlementView = {
   periodStart: string
   periodEnd: string
   amountCents: number
+  /** Part due aux livreurs (ADR 0005) — `amountCents = deliveryCents + serviceFeeCents`, jamais `amountCents - serviceFeeCents` au livreur. */
+  deliveryCents: number
+  /** Part Locadely, additive, jamais retirée de `deliveryCents`. */
+  serviceFeeCents: number
   deliveriesCount: number
   displayState: MerchantDisplayState
   debit: { date: string | null; ibanLast4: string | null; mandateReference: string | null; attemptNo: number | null; preNotifiedAt: string | null }
@@ -82,7 +86,7 @@ export type MerchantSettlementView = {
 export type MerchantSettlementsResponse = { generatedAt: string; settlements: MerchantSettlementView[] }
 
 export type MerchantAttemptView = { attemptNo: number; outcome: 'in_progress' | 'succeeded' | 'failed' | 'technical'; at: string }
-export type MerchantSettlementLineView = { orderId: string; finalizedAt: string; status: 'COMPLETED' | 'RETURNED'; amountCents: number }
+export type MerchantSettlementLineView = { orderId: string; finalizedAt: string; status: 'COMPLETED' | 'RETURNED'; amountCents: number; deliveryCents: number; serviceFeeCents: number }
 export type MerchantSettlementDetailResponse = { generatedAt: string; settlement: MerchantSettlementView; attempts: MerchantAttemptView[]; lines: MerchantSettlementLineView[] }
 
 /* ---------------- Admin : GET /api/v1/admin/settlements/overview ---------------- */

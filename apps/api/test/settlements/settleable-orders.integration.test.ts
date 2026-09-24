@@ -28,6 +28,8 @@ async function order(spec: Spec): Promise<string> {
     `insert into orders(id,merchant_id,driver_id,zone_id,status,customer_name,customer_phone,pickup_address,pickup_lat,pickup_lng,delivery_address,delivery_lat,delivery_lng,distance_m,duration_s,driver_earning_cents,created_at,completed_at)
      values($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::order_status,'Client','0600000000','Pickup',46.2,5.2,'Delivery',46.21,5.21,$6::int,$7::int,$8::int,$9::timestamptz,$10::timestamptz)`,
     [id, merchantId, driver, zoneId, status, spec.distance ?? 3000, spec.duration ?? 720, spec.earning ?? 475, spec.createdAt, status === 'COMPLETED' ? spec.completedAt ?? null : null])
+  const delivery = spec.earning ?? 475
+  await pool.query('update orders set delivery_cents=$2, service_fee_cents=$3 where id=$1::uuid', [id, delivery, Math.floor((delivery * 2_000) / 10_000)])
   orders.push(id)
   if (status === 'RETURNED' && spec.returnedAt) {
     await pool.query("insert into order_events(order_id,from_status,to_status,actor_type,correlation_id,created_at) values($1::uuid,'RETURNING','RETURNED','system',gen_random_uuid(),$2::timestamptz)", [id, spec.returnedAt])
@@ -103,10 +105,10 @@ describe.skipIf(!isolated)('listSettleableOrders', () => {
     expect(ids).toContain(atGoLive)
   })
 
-  it('returns the STORED amounts, never recomputed (earning 300 vs price 475)', async () => {
+  it('returns frozen delivery, service fee and pricing rule amounts, never recomputed', async () => {
     const id = await order({ createdAt: created(), completedAt: new Date(from.getTime() + DAY), earning: 300 })
     const found = (await repository.listSettleableOrders(win())).find(o => o.orderId === id)
-    expect(found).toMatchObject({ driverEarningCents: 300, merchantPriceCents: 475 })
+    expect(found).toMatchObject({ deliveryCents: 300, serviceFeeCents: 60, pricingRuleVersion: expect.any(Number) })
   })
 
   it('orders results by finalizedAt then id and rejects an empty or inverted window', async () => {

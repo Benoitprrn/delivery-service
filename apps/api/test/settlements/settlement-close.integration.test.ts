@@ -49,6 +49,7 @@ async function order(spec: Spec): Promise<string> {
     `insert into orders(id,merchant_id,driver_id,zone_id,status,customer_name,customer_phone,pickup_address,pickup_lat,pickup_lng,delivery_address,delivery_lat,delivery_lng,distance_m,duration_s,driver_earning_cents,created_at,completed_at)
      values($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::order_status,'Client','0600000000','Pickup',46.2,5.2,'Delivery',46.21,5.21,$6::int,$7::int,$8::int,$9::timestamptz,$10::timestamptz)`,
     [id, spec.merchant, status === 'CANCELLED' ? null : spec.driver, zoneId, status, shape[0], shape[1], spec.earning, spec.created, status === 'COMPLETED' ? spec.completed ?? null : null])
+  await pool.query('update orders set delivery_cents=$2, service_fee_cents=$3 where id=$1::uuid', [id, spec.earning, Math.floor((spec.earning * 2_000) / 10_000)])
   orderIds.push(id)
   if (status === 'RETURNED') {
     await pool.query("insert into order_events(order_id,from_status,to_status,actor_type,correlation_id,created_at) values($1::uuid,'RETURNING','RETURNED','system',gen_random_uuid(),$2::timestamptz)", [id, spec.returned])
@@ -101,13 +102,13 @@ describe.skipIf(!isolated)('weekly settlement close on PostgreSQL (R40)', () => 
     expect(new Date(period.payrun_at).toISOString()).toBe('2026-09-11T08:00:00.000Z')
     expect(new Date(period.go_live_at_snapshot).toISOString()).toBe('2026-08-15T00:00:00.000Z')
 
-    const settlements = (await pool.query(`select ms.merchant_id, ms.amount_cents::int as amount from merchant_settlements ms join settlement_periods p on p.id = ms.period_id where p.period_start = '2026-08-23T22:00:00Z' order by ms.merchant_id`)).rows
-    expect(settlements).toEqual([{ merchant_id: merchant1, amount: 475 + 909 }, { merchant_id: merchant2, amount: 401 }])
-    const statements = (await pool.query(`select s.merchant_id, s.driver_id, s.gross_cents::int as gross, s.fee_cents::int as fee, s.due_cents::int as due, s.status from settlement_statements s join settlement_periods p on p.id = s.period_id where p.period_start = '2026-08-23T22:00:00Z' order by s.merchant_id, s.driver_id`)).rows
+    const settlements = (await pool.query(`select ms.merchant_id, ms.amount_cents::int as amount, ms.driver_amount_cents::int as driver, ms.service_fee_cents::int as service from merchant_settlements ms join settlement_periods p on p.id = ms.period_id where p.period_start = '2026-08-23T22:00:00Z' order by ms.merchant_id`)).rows
+    expect(settlements).toEqual([{ merchant_id: merchant1, amount: 475 + 95 + 909 + 181, driver: 475 + 909, service: 95 + 181 }, { merchant_id: merchant2, amount: 401 + 80, driver: 401, service: 80 }])
+    const statements = (await pool.query(`select s.merchant_id, s.driver_id, s.due_cents::int as due, s.status from settlement_statements s join settlement_periods p on p.id = s.period_id where p.period_start = '2026-08-23T22:00:00Z' order by s.merchant_id, s.driver_id`)).rows
     expect(statements).toEqual([
-      { merchant_id: merchant1, driver_id: driver1, gross: 475, fee: 95, due: 380, status: 'unpaid' },
-      { merchant_id: merchant1, driver_id: driver2, gross: 909, fee: 181, due: 728, status: 'unpaid' },
-      { merchant_id: merchant2, driver_id: driver1, gross: 401, fee: 80, due: 321, status: 'unpaid' }
+      { merchant_id: merchant1, driver_id: driver1, due: 475, status: 'unpaid' },
+      { merchant_id: merchant1, driver_id: driver2, due: 909, status: 'unpaid' },
+      { merchant_id: merchant2, driver_id: driver1, due: 401, status: 'unpaid' }
     ])
     expect(await count("select count(*) c from settlement_lines l join orders o on o.id = l.order_id where l.finalized_at is distinct from case when o.status = 'COMPLETED' then o.completed_at else (select min(created_at) from order_events where order_id = o.id and to_status = 'RETURNED') end")).toBe(0)
     expect((await pool.query<{ final_status: string }>('select final_status from settlement_lines order by final_status')).rows.map((r) => r.final_status)).toEqual(['COMPLETED', 'COMPLETED', 'RETURNED']) // RETURNED payée, RETURNING/CANCELLED/hors fenêtre/avant go_live exclues
@@ -146,7 +147,7 @@ describe.skipIf(!isolated)('weekly settlement close on PostgreSQL (R40)', () => 
     await seedWeek()
     const summaries = await useCase.execute({ now: NOW, dryRun: true })
     expect(summaries.map((s) => s.status)).toEqual(['dry_run', 'dry_run', 'dry_run'])
-    expect(summaries[2]).toMatchObject({ lines: 3, statements: 3, merchantSettlements: 2, merchantAmountCents: 475 + 909 + 401, dueCents: 380 + 728 + 321, feeCents: 95 + 181 + 80, excludedOrdersCount: 1 })
+    expect(summaries[2]).toMatchObject({ lines: 3, statements: 3, merchantSettlements: 2, merchantAmountCents: 475 + 95 + 909 + 181 + 401 + 80, dueCents: 475 + 909 + 401, feeCents: 95 + 181 + 80, excludedOrdersCount: 1 })
     expect(await count('select count(*) c from settlement_periods')).toBe(0)
   })
 
@@ -206,15 +207,15 @@ describe.skipIf(!isolated)('SEPA pre-notification on PostgreSQL (R41)', () => {
     await expect(notifier.execute({ now: NOW })).resolves.toMatchObject({ enqueued: 2, claimed: 2, sent: 2, failed: 0 })
     expect(sender.sent.map((mail) => mail.to).sort()).toEqual(['resto1@example.test', 'resto2@example.test'])
     const first = sender.sent.find((mail) => mail.to === 'resto1@example.test')!
-    expect(first.subject).toBe('Prélèvement SEPA de 13,84\u00a0€ le mercredi 2 septembre 2026')
+    expect(first.subject).toBe('Prélèvement SEPA de 16,60\u00a0€ le mercredi 2 septembre 2026')
     expect(first.text).toContain('IBAN se terminant par 4242')
-    expect(sender.sent.find((mail) => mail.to === 'resto2@example.test')!.subject).toContain('4,01\u00a0€')
+    expect(sender.sent.find((mail) => mail.to === 'resto2@example.test')!.subject).toContain('4,81\u00a0€')
     expect(new Set(sender.sent.map((mail) => mail.idempotencyKey)).size).toBe(2)
 
     const rows = await notifications()
     expect(rows).toMatchObject([
-      { merchant_id: merchant1, status: 'sent', amount: 1384, debit_date: '2026-09-02', iban_last4: '4242', creditor_id: 'CREDITOR-TEST', recipient_email: 'resto1@example.test', settlement_status: 'notified' },
-      { merchant_id: merchant2, status: 'sent', amount: 401, debit_date: '2026-09-02', settlement_status: 'notified' }
+      { merchant_id: merchant1, status: 'sent', amount: 1660, debit_date: '2026-09-02', iban_last4: '4242', creditor_id: 'CREDITOR-TEST', recipient_email: 'resto1@example.test', settlement_status: 'notified' },
+      { merchant_id: merchant2, status: 'sent', amount: 481, debit_date: '2026-09-02', settlement_status: 'notified' }
     ])
     expect(rows.every((row) => (row.sent_at as Date).toISOString() === NOW.toISOString() && (row.pre_notified_at as Date).toISOString() === NOW.toISOString())).toBe(true)
 
