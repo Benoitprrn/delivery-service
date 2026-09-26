@@ -5,7 +5,6 @@
   "main": "expo-router/entry",
   "scripts": {
     "dev": "expo start",
-    "tunnel": "node ./scripts/start-tunnel.mjs",
     "android": "expo run:android",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
@@ -20,6 +19,7 @@
     "@stripe/stripe-terminal-react-native": "0.0.1-beta.33",
     "@supabase/supabase-js": "^2.116.0",
     "expo": "~57.0.24",
+    "expo-audio": "~57.0.5",
     "expo-build-properties": "~57.0.21",
     "expo-constants": "~57.0.18",
     "expo-dev-client": "~57.0.19",
@@ -54,7 +54,6 @@
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
-    "cloudflared": "^0.7.3",
     "tailwindcss": "^3.4.19",
     "typescript": "~6.0.3",
     "vitest": "^5.0.0"

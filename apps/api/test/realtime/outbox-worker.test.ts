@@ -176,7 +176,9 @@ describe('outbox relay', () => {
     const eventId = await insertOutboxEvent(payload, 'order.created.v1', true)
     const started: string[] = []
 
-    await processOutboxBatch(pool, createSocketEventEmitter(realtime.io, dispatchStarter((orderId) => started.push(orderId))))
+    await processOutboxBatch(pool, createSocketEventEmitter(realtime.io, dispatchStarter((orderId) => {
+      if (orderId === payload.orderId) started.push(orderId)
+    })))
     await new Promise<void>((resolve) => setTimeout(resolve, 100))
 
     expect(started).toEqual([])
@@ -241,7 +243,9 @@ describe('outbox relay', () => {
     const eventId = await insertOutboxEvent(payload)
     const started: string[] = []
 
-    await processOutboxBatch(pool, createSocketEventEmitter(realtime.io, dispatchStarter((orderId) => started.push(orderId))))
+    await processOutboxBatch(pool, createSocketEventEmitter(realtime.io, dispatchStarter((orderId) => {
+      if (orderId === payload.orderId) started.push(orderId)
+    })))
 
     expect(started).toEqual([payload.orderId])
     expect((await outboxRow(eventId)).published_at).not.toBeNull()

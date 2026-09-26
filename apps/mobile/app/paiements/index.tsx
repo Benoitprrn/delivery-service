@@ -121,10 +121,7 @@ export default function PayoutHubScreen() {
                 <SecondaryButton label="Ouvrir dans le navigateur" external onPress={() => void openHostedOnboarding()} />
               </>
             ) : (
-              <>
-                <PrimaryButton label="Mes versements et transactions" onPress={() => router.push('/paiements/versements')} />
-                <SecondaryButton label="Mon espace Stripe complet" external onPress={() => void openStripeDashboard()} />
-              </>
+              <SecondaryButton label="Gérer mon compte" external onPress={() => void openStripeDashboard()} />
             )}
             <SecondaryButton label="Actualiser" onPress={() => { void refresh().then((next) => { if (next === null) showToast('Actualisation impossible.'); }); }} />
             <Text className="font-sans text-body text-stone-500">

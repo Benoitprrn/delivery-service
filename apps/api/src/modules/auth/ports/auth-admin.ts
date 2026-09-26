@@ -2,7 +2,7 @@ export type CreateAuthUserInput = {
   id: string
   email: string
   password: string
-  appMetadata: { role: 'merchant' }
+  appMetadata: { role: 'merchant' | 'driver' }
 }
 
 export interface AuthAdmin {

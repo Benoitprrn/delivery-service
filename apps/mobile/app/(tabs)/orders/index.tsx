@@ -193,9 +193,9 @@ export default function MyOrdersScreen() {
   useEffect(() => {
     if (isHistory || currentNodeY === null) return;
     const frame = requestAnimationFrame(() => {
-      // Le header est sticky : ne pas inclure sa hauteur dans l'offset, sinon
-      // il recouvrirait le nœud cible. À cet offset, le nœud arrive juste sous
-      // les toggles fixes.
+      // Les toggles vivent maintenant hors du FlatList (vrai sibling fixe,
+      // jamais dans le contenu défilant) : l'offset 0 correspond déjà au
+      // sommet réel du contenu, aucune hauteur à soustraire.
       listRef.current?.scrollToOffset({ offset: Math.max(0, currentNodeY - 8), animated: false });
     });
     return () => cancelAnimationFrame(frame);
@@ -219,36 +219,33 @@ export default function MyOrdersScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
+      <View className="bg-background px-page-mobile pb-3 pt-4">
+        <View className="flex-row rounded-xl border border-border bg-surface p-1">
+          <Pressable
+            onPress={() => switchTab('active')}
+            className={`h-touch-comfortable flex-1 items-center justify-center rounded-lg ${!isHistory ? 'bg-primary-600' : ''}`}
+          >
+            <Text className={`font-sans-semibold text-body-lg ${!isHistory ? 'text-white' : 'text-stone-700'}`}>
+              En cours ({activeOrders?.length ?? 0})
+            </Text>
+          </Pressable>
+          <Pressable
+            onPress={() => switchTab('history')}
+            className={`h-touch-comfortable flex-1 items-center justify-center rounded-lg ${isHistory ? 'bg-primary-600' : ''}`}
+          >
+            <Text className={`font-sans-semibold text-body-lg ${isHistory ? 'text-white' : 'text-stone-700'}`}>
+              Historique ({historyOrders?.length ?? 0})
+            </Text>
+          </Pressable>
+        </View>
+      </View>
       <FlatList
         ref={listRef}
         data={displayedOrders}
         keyExtractor={(order) => order.id}
-        stickyHeaderIndices={[0]}
         contentContainerStyle={{ flexGrow: 1, gap: 12, paddingHorizontal: 16, paddingVertical: 16 }}
         refreshControl={
           <RefreshControl refreshing={isRefreshing} onRefresh={() => void load(true)} tintColor={EMERALD_600} />
-        }
-        ListHeaderComponent={
-          <View className="bg-background pb-3">
-            <View className="flex-row rounded-xl border border-border bg-surface p-1">
-              <Pressable
-                onPress={() => switchTab('active')}
-                className={`h-touch-comfortable flex-1 items-center justify-center rounded-lg ${!isHistory ? 'bg-primary-600' : ''}`}
-              >
-                <Text className={`font-sans-semibold text-body-lg ${!isHistory ? 'text-white' : 'text-stone-700'}`}>
-                  En cours ({activeOrders?.length ?? 0})
-                </Text>
-              </Pressable>
-              <Pressable
-                onPress={() => switchTab('history')}
-                className={`h-touch-comfortable flex-1 items-center justify-center rounded-lg ${isHistory ? 'bg-primary-600' : ''}`}
-              >
-                <Text className={`font-sans-semibold text-body-lg ${isHistory ? 'text-white' : 'text-stone-700'}`}>
-                  Historique ({historyOrders?.length ?? 0})
-                </Text>
-              </Pressable>
-            </View>
-          </View>
         }
         ListEmptyComponent={
           isHistory ? (

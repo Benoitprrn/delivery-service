@@ -4,6 +4,7 @@ import type { Zone } from '../../../zones/public.js'
 import type { CollectOrderUseCase } from '../../application/collect-order.js'
 import type { CompleteOrderUseCase } from '../../application/complete-order.js'
 import type { ConfirmReturnUseCase, ReturnOrderUseCase } from '../../application/return-order.js'
+import type { UnassignOrderUseCase } from '../../application/unassign-order.js'
 import type { CreateOrderUseCase } from '../../application/create-order.js'
 import type { EstimateOrderUseCase } from '../../application/estimate-order.js'
 import type { GetDriverEarningsUseCase } from '../../application/get-driver-earnings.js'
@@ -40,6 +41,7 @@ type OrdersHttpRoutesOptions = {
     completeOrder: CompleteOrderUseCase['execute']
     returnOrder: ReturnOrderUseCase['execute']
     confirmReturn: ConfirmReturnUseCase['execute']
+    unassignOrder: UnassignOrderUseCase['execute']
   }
   findMerchantById(merchantId: string): Promise<Merchant | null>
   findZoneById(zoneId: string): Promise<Zone | null>
@@ -326,6 +328,26 @@ export async function registerOrderHttpRoutes(
         return reply.code(403).send({ error: 'ForbiddenError', message: 'Only drivers can perform this action', correlationId: request.correlationId })
       }
       const order = await options.orders.confirmReturn({
+        orderId: id,
+        ...body,
+        driverId: request.authUser.id,
+        actor: { type: 'driver', id: request.authUser.id },
+        correlationId: request.correlationId
+      })
+      return reply.code(200).send(order)
+    } catch (error) {
+      return sendMappedError(request, reply, error)
+    }
+  })
+
+  app.post('/api/v1/orders/:id/unassign', async (request, reply) => {
+    try {
+      const { id } = orderIdParamsSchema.parse(request.params)
+      const body = orderTransitionBodySchema.parse(request.body)
+      if (request.authUser?.role !== 'driver') {
+        return reply.code(403).send({ error: 'ForbiddenError', message: 'Only drivers can perform this action', correlationId: request.correlationId })
+      }
+      const order = await options.orders.unassignOrder({
         orderId: id,
         ...body,
         driverId: request.authUser.id,

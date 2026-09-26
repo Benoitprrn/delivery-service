@@ -1,11 +1,12 @@
 import type { Pool, PoolClient } from 'pg'
 import { inTransaction } from '../../../platform/transaction.js'
-import type { CreditNoteDocument, InvoiceDocument, InvoiceRepository, OrderDocuments } from '../ports/invoice-repository.js'
+import type { CreditNoteDocument, DriverInvoiceListItem, InvoiceDocument, InvoiceRepository, OrderDocuments } from '../ports/invoice-repository.js'
 
 type OrderRow = { id: string; status: string; driver_id: string | null; merchant_id: string; public_reference: string; delivery_cents: number | null; service_fee_cents: number | null; completed_at: Date | null }
 type LegalRow = { legal_name: string; siren: string; siret: string; vat_number: string | null; vat_regime: 'assujetti' | 'franchise_en_base' | 'exonere' | null; address_line1: string; address_line2: string | null; address_postal_code: string; address_city: string; address_country_code: string }
 type SubmissionStatus = 'prepared' | 'submitting' | 'submitted' | 'accepted' | 'rejected' | 'retryable' | 'failed' | 'unknown_outcome'
 type InvoiceRow = { id: string; number: string; issuer_kind: 'driver' | 'locadely'; invoice_type_code: '380' | '389'; issued_at: Date; total_ht_cents: number; total_vat_cents: number; total_ttc_cents: number; transmission_status: string; submission_status: SubmissionStatus; last_error: string | null }
+type DriverInvoiceRow = InvoiceRow & { order_id: string; order_public_reference: string; merchant_name: string }
 type CreditRow = { id: string; number: string; original_invoice_number: string; issued_at: Date; total_ht_cents: number; total_vat_cents: number; total_ttc_cents: number; transmission_status: string; submission_status: SubmissionStatus; last_error: string | null }
 
 export class InvoiceIssuanceDeferredError extends Error {
@@ -32,6 +33,9 @@ function vatCentsFor(htCents: number, rateBps: number): number {
 
 function invoiceDocument(row: InvoiceRow): InvoiceDocument {
   return { id: row.id, number: row.number, issuerKind: row.issuer_kind, invoiceTypeCode: row.invoice_type_code, issuedAt: row.issued_at, totalHtCents: row.total_ht_cents, totalVatCents: row.total_vat_cents, totalTtcCents: row.total_ttc_cents, transmissionStatus: row.transmission_status, submissionStatus: row.submission_status, lastError: row.last_error, facturXAvailable: row.transmission_status === 'confirmed' }
+}
+function driverInvoiceListItem(row: DriverInvoiceRow): DriverInvoiceListItem {
+  return { ...invoiceDocument(row), orderId: row.order_id, orderPublicReference: row.order_public_reference, merchantName: row.merchant_name }
 }
 function creditDocument(row: CreditRow): CreditNoteDocument {
   return { id: row.id, number: row.number, originalInvoiceNumber: row.original_invoice_number, issuedAt: row.issued_at, totalHtCents: row.total_ht_cents, totalVatCents: row.total_vat_cents, totalTtcCents: row.total_ttc_cents, transmissionStatus: row.transmission_status, submissionStatus: row.submission_status, lastError: row.last_error, facturXAvailable: row.transmission_status === 'confirmed' }
@@ -68,6 +72,19 @@ export class PostgresInvoiceRepository implements InvoiceRepository {
 
   public async listForMerchantOrder(orderId: string, merchantId: string): Promise<OrderDocuments | null> { return this.list(orderId, merchantId, null) }
   public async listForDriverOrder(orderId: string, driverId: string): Promise<OrderDocuments | null> { return this.list(orderId, null, driverId) }
+
+  public async listForDriver(driverId: string): Promise<DriverInvoiceListItem[]> {
+    const result = await this.pool.query<DriverInvoiceRow>(
+      `select i.id, i.number, i.issuer_kind, i.invoice_type_code, i.issued_at, i.total_ht_cents, i.total_vat_cents, i.total_ttc_cents, i.transmission_status, coalesce(s.submission_status, 'prepared') as submission_status, s.last_error, i.order_id, i.order_public_reference, m.name as merchant_name
+       from invoices i
+       join merchants m on m.id = i.buyer_merchant_id
+       left join invoice_provider_submissions s on s.invoice_id = i.id and s.provider = 'superpdp'
+       where i.issuer_kind = 'driver' and i.issuer_driver_id = $1
+       order by i.issued_at desc`,
+      [driverId]
+    )
+    return result.rows.map(driverInvoiceListItem)
+  }
 
   public async createCreditNote(input: { originalInvoiceLineId: string; decisionReference: string; decisionReason: string; lineHtCents: number }): Promise<CreditNoteDocument> {
     return inTransaction(this.pool, async (client) => {

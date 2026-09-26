@@ -1,7 +1,6 @@
-import type { Merchant } from '../domain/merchant.js'
+import type { Merchant, MerchantAccountContact } from '../domain/merchant.js'
 import type { PostalAddress } from './sirene-provider.js'
 import type { PoolClient } from 'pg'
-import type { MerchantAccountContact } from '../application/account-contact.js'
 
 export type MerchantInformationPatch = {
   name: string

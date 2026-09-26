@@ -21,21 +21,18 @@ export function derivePayoutUi(account: PayoutAccountState | null): PayoutUi {
     return {
       ready: false,
       tone: 'warning',
-      title: 'Configurez vos paiements',
-      description: 'Pour voir des courses et être payé, créez votre compte de paiement sécurisé (Stripe).',
+      title: 'Configurez votre compte avec Stripe',
+      description: '',
       action: 'create'
     };
   }
   const staleNote = account.stale ? ' (dernier état connu : connexion indisponible)' : '';
   if (account.ready) {
-    const upcoming = account.requirements === 'eventually_due' || account.requirements === 'currently_due';
     return {
       ready: true,
       tone: 'success',
-      title: 'Paiements prêts',
-      description: (upcoming
-        ? 'Vous pouvez prendre des courses. Stripe pourra vous demander une pièce justificative : gardez l’application à jour.'
-        : 'Vous pouvez prendre des courses et recevoir vos versements.') + staleNote,
+      title: 'Votre compte de paiement est configuré',
+      description: '',
       action: 'none'
     };
   }

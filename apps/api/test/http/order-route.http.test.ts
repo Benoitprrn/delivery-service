@@ -16,7 +16,7 @@ function orders(getOrderRoute = vi.fn()) {
   return {
     createOrder: vi.fn(), estimateOrder: vi.fn(), getMerchantOrders: vi.fn(), getDriverOrders: vi.fn(),
     getDriverHistory: vi.fn(), getDriverEarnings: vi.fn(), listAvailableOrders: vi.fn(),
-    assignOrder: vi.fn(), collectOrder: vi.fn(), completeOrder: vi.fn(), returnOrder: vi.fn(), confirmReturn: vi.fn(),
+    assignOrder: vi.fn(), collectOrder: vi.fn(), completeOrder: vi.fn(), returnOrder: vi.fn(), confirmReturn: vi.fn(), unassignOrder: vi.fn(),
     findDriverOrderById: vi.fn(),
     getOrderRoute
   }

@@ -1,12 +1,7 @@
-import { Platform, ToastAndroid } from 'react-native';
-
-// Android uniquement pour l'instant (contexte projet) — no-op ailleurs
-// (web notamment) plutôt qu'une dépendance de toast cross-platform pour un
-// seul message court.
-export function showToast(message: string) {
-  if (Platform.OS === 'android') {
-    ToastAndroid.show(message, ToastAndroid.SHORT);
-  } else {
-    console.log('[toast]', message);
-  }
+// Les messages transitoires du système (ToastAndroid) sont volontairement
+// désactivés : ils ne respectent pas le design system et affichent le chrome
+// du development build. Les écrans portent désormais leur propre retour
+// visuel quand une action le nécessite.
+export function showToast(_message: string) {
+  // no-op
 }

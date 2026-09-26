@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { UpdateMerchantAccountContactUseCase, type MerchantAccountContact } from '../../src/modules/merchants/application/account-contact.js'
+import { UpdateMerchantAccountContactUseCase } from '../../src/modules/merchants/application/account-contact.js'
 import type { MerchantAccountContactRepository } from '../../src/modules/merchants/ports/merchant-repository.js'
+import type { MerchantAccountContact } from '../../src/modules/merchants/domain/merchant.js'
 
 class FakeContacts implements MerchantAccountContactRepository {
   public value: MerchantAccountContact | null = null

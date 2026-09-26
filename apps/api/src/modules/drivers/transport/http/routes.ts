@@ -6,8 +6,11 @@ import type { HeartbeatDriverAvailabilityUseCase } from '../../application/heart
 import type { RecordDriverLocationUseCase } from '../../application/record-driver-location.js'
 import type { RegisterDriverPushTokenUseCase } from '../../application/register-driver-push-token.js'
 import type { SetDriverAvailabilityUseCase } from '../../application/set-driver-availability.js'
-import { driverAvailabilityBodySchema, driverLocationBodySchema, driverPushTokenBodySchema, updateDriverLegalInformationBodySchema, updateDriverProfileBodySchema } from './schemas.js'
-import type { DriverLegalInformation } from '../../application/legal-information.js'
+import { driverAvailabilityBodySchema, driverCompanyProfileBodySchema, driverLocationBodySchema, driverPushTokenBodySchema } from './schemas.js'
+import type { ProvisionDriverUseCase } from '../../application/provision-driver.js'
+import { DriverProvisioningError, DriverSignupConflictError, DriverSignupFinalizingError } from '../../domain/driver-signup-errors.js'
+import { driverSignupBodySchema } from './schemas.js'
+import type { DriverCompanyProfile, DriverCompanyProfileStatus } from '../../application/company-profile.js'
 
 type DriversHttpRoutesOptions = {
   drivers: {
@@ -18,9 +21,9 @@ type DriversHttpRoutesOptions = {
     registerPushToken: RegisterDriverPushTokenUseCase['execute']
     heartbeat: HeartbeatDriverAvailabilityUseCase['execute']
     recordLocation: RecordDriverLocationUseCase['execute']
-    updateProfile?(driverId: string, profile: { firstName: string; lastName: string; phone: string }): Promise<unknown>
-    getLegalInformation?(driverId: string): Promise<DriverLegalInformation | null>
-    updateLegalInformation?(driverId: string, command: Omit<DriverLegalInformation, 'driverId' | 'siren'>): Promise<DriverLegalInformation>
+    provisionDriver?: ProvisionDriverUseCase['execute']
+    getCompanyProfile?(driverId: string): Promise<{ profile: DriverCompanyProfile; status: DriverCompanyProfileStatus }>
+    saveCompanyProfile?(driverId: string, profile: DriverCompanyProfile): Promise<{ profile: DriverCompanyProfile; status: DriverCompanyProfileStatus }>
   }
 }
 
@@ -28,6 +31,34 @@ export async function registerDriverHttpRoutes(
   app: FastifyInstance,
   options: DriversHttpRoutesOptions
 ): Promise<void> {
+  app.post('/api/v1/auth/driver-signup', { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
+    try {
+      const body = driverSignupBodySchema.parse(request.body)
+      const result = await options.drivers.provisionDriver!({ firstName: body.firstName, lastName: body.lastName, email: body.email, phone: body.phone, password: body.password, correlationId: request.correlationId, logger: request.log })
+      return reply.code(201).send(result)
+    } catch (error) {
+      if (error instanceof ZodError) return reply.code(400).send({ error: 'ValidationError', message: 'Request validation failed', correlationId: request.correlationId })
+      if (error instanceof DriverSignupConflictError) return reply.code(409).send({ error: 'AccountAlreadyExistsError', message: 'An account with these details already exists', correlationId: request.correlationId })
+      if (error instanceof DriverSignupFinalizingError) return reply.code(202).send({ error: error.name, message: error.message, correlationId: request.correlationId })
+      if (error instanceof DriverProvisioningError) return reply.code(502).send({ error: error.name, message: 'Account creation could not be completed', correlationId: request.correlationId })
+      request.log.error({ err: error }, 'Driver signup failed')
+      return reply.code(500).send({ error: 'InternalServerError', message: 'An unexpected error occurred', correlationId: request.correlationId })
+    }
+  })
+  app.get('/api/v1/drivers/me/company-profile', async (request, reply) => {
+    if (request.authUser?.role !== 'driver') return reply.code(403).send({ error: 'ForbiddenError', correlationId: request.correlationId })
+    return reply.send(await options.drivers.getCompanyProfile!(request.authUser.id))
+  })
+  app.patch('/api/v1/drivers/me/company-profile', async (request, reply) => {
+    try {
+      if (request.authUser?.role !== 'driver') return reply.code(403).send({ error: 'ForbiddenError', correlationId: request.correlationId })
+      return reply.send(await options.drivers.saveCompanyProfile!(request.authUser.id, driverCompanyProfileBodySchema.parse(request.body)))
+    } catch (error) {
+      if (error instanceof ZodError) return reply.code(400).send({ error: 'ValidationError', correlationId: request.correlationId })
+      request.log.error({ err: error }, 'Driver company profile save failed')
+      return reply.code(500).send({ error: 'InternalServerError', correlationId: request.correlationId })
+    }
+  })
   app.get('/api/v1/drivers/me', async (request, reply) => {
     try {
       if (request.authUser?.role !== 'driver') {
@@ -55,36 +86,6 @@ export async function registerDriverHttpRoutes(
         message: 'An unexpected error occurred',
         correlationId: request.correlationId
       })
-    }
-  })
-
-  app.patch('/api/v1/drivers/me', async (request, reply) => {
-    try {
-      if (request.authUser?.role !== 'driver') return reply.code(403).send({ error: 'ForbiddenError', correlationId: request.correlationId })
-      const body = updateDriverProfileBodySchema.parse(request.body)
-      const driver = await options.drivers.updateProfile!(request.authUser.id, body)
-      if (driver === null) return reply.code(404).send({ error: 'DriverNotFoundError', correlationId: request.correlationId })
-      return reply.send({ ...driver, email: request.authUser.email })
-    } catch (error) {
-      if (error instanceof ZodError) return reply.code(400).send({ error: 'ValidationError', correlationId: request.correlationId })
-      request.log.error({ err: error }, 'Driver profile update failed')
-      return reply.code(500).send({ error: 'InternalServerError', correlationId: request.correlationId })
-    }
-  })
-
-  app.get('/api/v1/drivers/me/legal-information', async (request, reply) => {
-    if (request.authUser?.role !== 'driver') return reply.code(403).send({ error: 'ForbiddenError', correlationId: request.correlationId })
-    return reply.send({ legalInformation: await options.drivers.getLegalInformation!(request.authUser.id) })
-  })
-  app.patch('/api/v1/drivers/me/legal-information', async (request, reply) => {
-    try {
-      if (request.authUser?.role !== 'driver') return reply.code(403).send({ error: 'ForbiddenError', correlationId: request.correlationId })
-      const body = updateDriverLegalInformationBodySchema.parse(request.body)
-      return reply.send({ legalInformation: await options.drivers.updateLegalInformation!(request.authUser.id, { ...body, billingAddress: body.billingAddress ?? null, vatNumber: body.vatNumber ?? null, vatRegime: body.vatRegime ?? null, legalForm: body.legalForm ?? null }) })
-    } catch (error) {
-      if (error instanceof ZodError) return reply.code(400).send({ error: 'ValidationError', correlationId: request.correlationId })
-      request.log.error({ err: error }, 'Driver legal information update failed')
-      return reply.code(500).send({ error: 'InternalServerError', correlationId: request.correlationId })
     }
   })
 

@@ -12,6 +12,8 @@ import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { StatusBar } from 'expo-status-bar';
 import { AuthProvider, useAuth } from '../lib/auth-context';
 import { PayoutAccountProvider } from '../lib/payout-account-context';
 import { usePushNotifications } from '../lib/push-notifications';
@@ -62,14 +64,20 @@ function AppShell({ fontsLoaded }: { fontsLoaded: boolean }) {
     // bon endroit" sinon la garde les referme immédiatement après ouverture.
     const inOrderModal = segments[0] === 'order';
     const inDispatchOfferModal = segments[0] === 'dispatch-offer';
-    // Écrans « Mes paiements » (compte Stripe du livreur) : routes racine authentifiées, ouvertes depuis la Carte et le Wallet.
+    // Écrans « Mes paiements » (compte Stripe du livreur) : routes racine authentifiées, ouvertes depuis la Carte et les paiements.
     const inPayoutScreens = segments[0] === 'paiements';
+    // Écran « Mandat de facturation » : route racine authentifiée, ouverte depuis Compte → Mes
+    // factures. Trouvé manquant ici le 2026-09-25 : sans cette entrée, la garde ci-dessous
+    // renvoyait immédiatement vers Carte dès l'arrivée sur /mandat — l'écran était donc
+    // injoignable même une fois un lien construit vers lui.
+    const inMandateScreen = segments[0] === 'mandat';
     const onLoginScreen = segments[0] === 'login';
+    const onDriverSignupScreen = segments[0] === 'driver-signup';
     const isAuthorizedDriver = status === 'signedIn' && role === 'driver';
 
-    if (!isAuthorizedDriver && !onLoginScreen) {
+    if (!isAuthorizedDriver && !onLoginScreen && !onDriverSignupScreen) {
       router.replace('/login');
-    } else if (isAuthorizedDriver && !inTabsGroup && !inOrderModal && !inDispatchOfferModal && !inPayoutScreens) {
+    } else if (isAuthorizedDriver && !inTabsGroup && !inOrderModal && !inDispatchOfferModal && !inPayoutScreens && !inMandateScreen) {
       router.replace('/(tabs)/map');
     }
   }, [ready, status, role, segments, router]);
@@ -80,13 +88,16 @@ function AppShell({ fontsLoaded }: { fontsLoaded: boolean }) {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <PayoutAccountProvider enabled={status === 'signedIn' && role === 'driver'}>
-      <Stack screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="order/[id]/index" options={{ presentation: 'modal' }} />
-        <Stack.Screen name="order/[id]/proof" options={{ presentation: 'modal' }} />
-        <Stack.Screen name="dispatch-offer/[id]/index" options={{ presentation: 'modal', gestureEnabled: false }} />
-      </Stack>
-      </PayoutAccountProvider>
+      <SafeAreaProvider>
+        <StatusBar style="dark" hidden={false} />
+        <PayoutAccountProvider enabled={status === 'signedIn' && role === 'driver'}>
+          <Stack screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="order/[id]/index" options={{ presentation: 'modal' }} />
+            <Stack.Screen name="order/[id]/proof" options={{ presentation: 'modal' }} />
+            <Stack.Screen name="dispatch-offer/[id]/index" options={{ presentation: 'modal', gestureEnabled: false }} />
+          </Stack>
+        </PayoutAccountProvider>
+      </SafeAreaProvider>
     </GestureHandlerRootView>
   );
 }

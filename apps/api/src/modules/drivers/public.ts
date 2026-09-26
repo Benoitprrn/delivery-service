@@ -8,9 +8,12 @@ import { HeartbeatDriverAvailabilityUseCase } from './application/heartbeat-driv
 import { GetDriverLiveProfileUseCase } from './application/get-driver-live-profile.js'
 import { RegisterDriverPushTokenUseCase } from './application/register-driver-push-token.js'
 import { GetDriverCapacityUseCase } from './application/get-driver-capacity.js'
-import { UpdateDriverLegalInformationUseCase } from './application/legal-information.js'
 import { PostgresDriverLocationRepository } from './infrastructure/postgres-driver-location-repository.js'
 import { PostgresDriverRepository } from './infrastructure/postgres-driver-repository.js'
+import { PostgresDriverSignupRepository } from './infrastructure/postgres-driver-signup-repository.js'
+import { ProvisionDriverUseCase } from './application/provision-driver.js'
+import { DriverCompanyProfileUseCases } from './application/company-profile.js'
+import type { AccountPhoneRegistry, AuthAdmin, AuthUserLookup } from '../auth/public.js'
 import { ValkeyDriverAvailabilityRepository } from './infrastructure/valkey-driver-availability-repository.js'
 import { ValkeyDriverCapacityRepository } from './infrastructure/valkey-driver-capacity-repository.js'
 import { ValkeyDriverPositionRepository } from './infrastructure/valkey-driver-position-repository.js'
@@ -29,6 +32,7 @@ export function createDriversModule(
   valkey?: Redis,
   syncDriverPresence: (driverId: string, available: boolean) => Promise<void> | void = () => undefined,
   tracking?: { activeOrders: ActiveOrderTrackingReader; emitter: TrackingPositionEmitter }
+  ,signup?: { auth: AuthAdmin & AuthUserLookup; phones: AccountPhoneRegistry; zoneId: string }
 ) {
   const repository = new PostgresDriverRepository(pool)
   const locationRepository = new PostgresDriverLocationRepository(pool)
@@ -66,7 +70,8 @@ export function createDriversModule(
   const getDriverLiveProfileUseCase = new GetDriverLiveProfileUseCase(repository, availabilityRepository)
   const registerDriverPushTokenUseCase = new RegisterDriverPushTokenUseCase(repository)
   const getDriverCapacityUseCase = new GetDriverCapacityUseCase(capacityRepository, tracking?.activeOrders)
-  const updateDriverLegalInformationUseCase = new UpdateDriverLegalInformationUseCase(repository, repository)
+  const provisionDriverUseCase = signup === undefined ? undefined : new ProvisionDriverUseCase(pool, new PostgresDriverSignupRepository(), signup.phones, signup.auth, signup.zoneId)
+  const companyProfile = new DriverCompanyProfileUseCases(pool)
 
   return {
     findDriverById: repository.findById.bind(repository),
@@ -84,8 +89,12 @@ export function createDriversModule(
     findAvailableWithinRadius: positionRepository.findAllWithinRadius.bind(positionRepository),
     findLatestDriverLocation: locationRepository.findLatestByDriverId.bind(locationRepository),
     getLiveDriverProfile: getDriverLiveProfileUseCase.execute.bind(getDriverLiveProfileUseCase)
-    ,updateProfile: repository.updateProfile.bind(repository)
+    // Réutilisée en interne par app.ts (mandat de facturation électronique) — jamais exposée en HTTP
+    // depuis le retrait des routes /api/v1/drivers/me/legal-information (2026-09-25).
     ,getLegalInformation: repository.findLegalInformation.bind(repository)
-    ,updateLegalInformation: updateDriverLegalInformationUseCase.execute.bind(updateDriverLegalInformationUseCase)
+    ,getCompanyProfile: companyProfile.get.bind(companyProfile),
+    saveCompanyProfile: companyProfile.save.bind(companyProfile),
+    getCompanyProfileStatus: companyProfile.statusFor.bind(companyProfile),
+    ...(provisionDriverUseCase === undefined ? {} : { provisionDriver: provisionDriverUseCase.execute.bind(provisionDriverUseCase) })
   }
 }

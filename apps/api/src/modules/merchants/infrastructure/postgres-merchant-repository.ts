@@ -1,9 +1,8 @@
 import type { Pool, PoolClient } from 'pg'
 import { inTransaction } from '../../../platform/transaction.js'
 import { MerchantNotFoundError } from '../domain/errors.js'
-import type { Merchant } from '../domain/merchant.js'
+import type { Merchant, MerchantAccountContact } from '../domain/merchant.js'
 import type { MerchantAccountContactRepository, MerchantInformationPatch, MerchantRepository, MerchantLegalInformation, MerchantLegalInformationPatch, MerchantLegalInformationRepository, SireneVerificationStatus } from '../ports/merchant-repository.js'
-import type { MerchantAccountContact } from '../application/account-contact.js'
 
 type MerchantRow = {
   id: string

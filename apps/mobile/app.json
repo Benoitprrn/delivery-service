@@ -38,7 +38,15 @@
         }
       ],
       "expo-secure-store",
-      "expo-notifications",
+      [
+        "expo-notifications",
+        {
+          "sounds": [
+            "./assets/sounds/dispatch_offer.wav"
+          ]
+        }
+      ],
+      "expo-audio",
       "@maplibre/maplibre-react-native",
       [
         "expo-location",

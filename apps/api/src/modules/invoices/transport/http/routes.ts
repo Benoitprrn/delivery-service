@@ -3,7 +3,7 @@ import { z } from 'zod'
 import type { GetOrderDocumentsCommand } from '../../application/get-order-documents.js'
 import type { GetInvoiceDocumentFileResult } from '../../application/get-invoice-document-file.js'
 import type { GetInvoiceDocumentFileCommand } from '../../ports/invoice-document-file-repository.js'
-import type { OrderDocuments } from '../../ports/invoice-repository.js'
+import type { DriverInvoiceListItem, OrderDocuments } from '../../ports/invoice-repository.js'
 import type { CurrentDriverEInvoiceMandate } from '../../ports/driver-einvoice-mandate-repository.js'
 import { DriverLegalInformationRequiredError, InvalidMandateAcceptanceError, MandateTemplateIntegrityError, MandateTemplateNotConfiguredError, PlatformLegalIdentityRequiredError } from '../../application/accept-driver-einvoice-mandate.js'
 
@@ -15,6 +15,7 @@ const mandateBody = z.object({ signatureImageBase64: z.string().min(1), signerFi
 type MandateStatus = { mandateExists: boolean; providerVerificationStatus: string | null; submissionStatus: 'prepared' | 'submitting' | 'submitted' | 'retryable' | 'failed' | 'unknown_outcome' | null; lastError: string | null; drift: unknown; template: { text: string; version: number } | null; liveLegalInformation: unknown; blockedReason: 'legal_information_missing' | 'driver_name_missing' | 'template_not_configured' | 'platform_identity_missing' | null; previewText: string | null }
 export const registerInvoiceHttpRoutes: FastifyPluginAsync<{
   getOrderDocuments: (command: GetOrderDocumentsCommand) => Promise<OrderDocuments | null>
+  getDriverInvoices: (driverId: string) => Promise<DriverInvoiceListItem[]>
   getInvoiceDocumentFile: (command: GetInvoiceDocumentFileCommand) => Promise<GetInvoiceDocumentFileResult>
   getDriverEInvoiceMandateStatus: (driverId: string) => Promise<MandateStatus>
   acceptDriverEInvoiceMandate: (input: { driverId: string; signatureImageBase64: string; signerFirstName: string; signerLastName: string }) => Promise<CurrentDriverEInvoiceMandate>
@@ -49,6 +50,10 @@ export const registerInvoiceHttpRoutes: FastifyPluginAsync<{
       if (error instanceof z.ZodError) return reply.code(400).send({ error: 'ValidationError', correlationId: request.correlationId })
       throw error
     }
+  })
+  app.get('/api/v1/drivers/me/invoices', async (request, reply) => {
+    if (request.authUser?.role !== 'driver') return reply.code(403).send({ error: 'ForbiddenError', correlationId: request.correlationId })
+    return reply.send({ invoices: await options.getDriverInvoices(request.authUser.id) })
   })
   app.get('/api/v1/drivers/me/einvoice-mandate', async (request, reply) => {
     if (request.authUser?.role !== 'driver') return reply.code(403).send({ error: 'ForbiddenError', correlationId: request.correlationId })

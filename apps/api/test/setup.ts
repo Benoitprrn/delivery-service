@@ -11,6 +11,11 @@ import { afterAll } from 'vitest'
 if (process.env.SUPERPDP_SANDBOX_TESTS !== '1') {
   process.env.SUPABASE_SECRET_KEY ??= 'test-service-role-key'
 }
+// Required production configuration. buildApp() validates this against `zones`
+// at startup, so it must match the pilot zone every test DB already seeds
+// (supabase/seed.sql) — the shared dev DB and every disposable test DB alike,
+// not an arbitrary placeholder that only a dedicated fixture would contain.
+process.env.DRIVER_SIGNUP_ZONE_ID ??= '11111111-1111-1111-1111-111111111111'
 
 // Les tests sont hors ligne par contrat : même si le .env local porte des clés
 // Stripe (Sandbox), aucun test ne doit pouvoir instancier le vrai provider ni

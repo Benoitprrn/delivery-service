@@ -18,7 +18,7 @@ import { showToast } from '../../lib/toast';
 // backend, avant/après signature, y compris après une fermeture d'app en cours de route.
 type Phase = 'loading' | 'error' | 'status' | 'read' | 'name' | 'signing';
 
-const CONSENT_TEXT = 'Je confirme avoir lu le mandat et accepter que Locadely établisse mes factures en mon nom et pour mon compte.';
+const CONSENT_TEXT = 'J’ai lu le mandat et j’autorise Locadely à établir mes factures en mon nom.';
 
 function Header({ title, onBack }: { title: string; onBack: () => void }) {
   return (
@@ -101,6 +101,7 @@ export default function MandateScreen() {
               value={signerFirstName}
               onChangeText={setSignerFirstName}
               placeholder="Prénom"
+              placeholderTextColor="#A8A29E"
               autoCapitalize="words"
               className="h-touch-comfortable rounded-lg border-2 border-border bg-surface px-4 font-sans text-body-lg text-stone-800"
             />
@@ -108,6 +109,7 @@ export default function MandateScreen() {
               value={signerLastName}
               onChangeText={setSignerLastName}
               placeholder="Nom"
+              placeholderTextColor="#A8A29E"
               autoCapitalize="words"
               className="h-touch-comfortable rounded-lg border-2 border-border bg-surface px-4 font-sans text-body-lg text-stone-800"
             />
@@ -131,7 +133,7 @@ export default function MandateScreen() {
         <ScrollView contentContainerStyle={{ gap: 16, paddingHorizontal: 16, paddingBottom: 32 }}>
           <Pressable onPress={() => setConsentChecked((v) => !v)} className="min-h-touch-comfortable flex-row items-start gap-3 rounded-2xl border border-border bg-surface p-4 active:opacity-75">
             <View className={`mt-0.5 h-6 w-6 items-center justify-center rounded border-2 ${consentChecked ? 'border-primary-600 bg-primary-600' : 'border-border bg-white'}`}>
-              {consentChecked ? <Text className="font-sans-bold text-body text-white">✓</Text> : null}
+              {consentChecked ? <Text className="font-sans-bold text-body leading-none text-white">✓</Text> : null}
             </View>
             <Text className="flex-1 font-sans text-body-lg text-stone-700">{CONSENT_TEXT}</Text>
           </Pressable>
@@ -158,7 +160,7 @@ export default function MandateScreen() {
             onPress={() => setPhase('name')}
             className="h-touch-comfortable items-center justify-center rounded-lg bg-primary-600 active:bg-primary-700"
           >
-            <Text className="font-sans-bold text-body-lg text-white">Accepter et signer</Text>
+            <Text className="font-sans-bold text-body-lg text-white">Signer</Text>
           </Pressable>
         </ScrollView>
       </SafeAreaView>

@@ -20,6 +20,7 @@ import {
   buildOrderCreatedEvent,
   buildOrderReturnedEvent,
   buildOrderReturningEvent,
+  buildOrderUnassignedEvent,
   type DomainEvent,
 } from '../domain/order-events.js'
 import type {
@@ -271,9 +272,9 @@ function mapOrderForDriver(row: OrderRow): OrderForDriver {
 const driverOrderSelect = `
   select
     o.id, o.public_reference, o.merchant_id, o.driver_id, o.zone_id, o.status, o.version,
-    case when o.status in ('COLLECTED', 'RETURNING', 'RETURNED', 'COMPLETED')
+    case when o.status in ('COLLECTED', 'RETURNING', 'RETURNED')
       then o.customer_name else null end as customer_name,
-    case when o.status in ('COLLECTED', 'RETURNING', 'RETURNED', 'COMPLETED')
+    case when o.status in ('COLLECTED', 'RETURNING', 'RETURNED')
       then o.customer_phone else null end as customer_phone,
     o.customer_email, o.pickup_scheduled_at, o.order_details,
     o.delivery_instructions, o.delivery_address_complement,
@@ -495,7 +496,8 @@ export class PostgresOrderRepository implements OrderRepository {
           attempt !== null &&
           typeof (attempt as { driverId?: unknown }).driverId === 'string' &&
           ((attempt as { reason?: unknown }).reason === 'refused' ||
-            (attempt as { reason?: unknown }).reason === 'timeout') &&
+            (attempt as { reason?: unknown }).reason === 'timeout' ||
+            (attempt as { reason?: unknown }).reason === 'driver_cancelled') &&
           typeof (attempt as { round?: unknown }).round === 'number' &&
           typeof (attempt as { refusedAt?: unknown }).refusedAt === 'string',
       ),
@@ -1208,6 +1210,54 @@ export class PostgresOrderRepository implements OrderRepository {
         actor,
         correlationId,
         buildOrderReturnedEvent(order),
+      )
+      return order
+    })
+  }
+
+  public async unassign(
+    orderId: string,
+    driverId: string,
+    expectedVersion: number,
+    actor: Actor,
+    correlationId: string,
+  ): Promise<Order> {
+    return inTransaction(this.pool, async (client) => {
+      const result = await client.query<OrderRow>(
+        `update orders
+         set status = 'AVAILABLE',
+             driver_id = null,
+             assigned_at = null,
+             updated_at = now(),
+             version = version + 1,
+             metadata = jsonb_set(
+               metadata,
+               '{dispatch_attempts}',
+               coalesce(metadata->'dispatch_attempts', '[]'::jsonb) || jsonb_build_array(
+                 jsonb_build_object(
+                   'driverId', $2,
+                   'reason', 'driver_cancelled',
+                   'round', 0,
+                   'refusedAt', now()
+                 )
+               ),
+               true
+             )
+         where id = $1 and driver_id = $2 and status = 'ASSIGNED' and version = $3
+         returning *`,
+        [orderId, driverId, expectedVersion],
+      )
+      if (result.rowCount !== 1 || result.rows[0] === undefined) {
+        throw new OrderConflictError(`Order ${orderId} could not transition ASSIGNED -> AVAILABLE`)
+      }
+      const order = mapOrder(result.rows[0])
+      await insertTransitionEvent(
+        client,
+        order,
+        'ASSIGNED',
+        actor,
+        correlationId,
+        buildOrderUnassignedEvent(order),
       )
       return order
     })

@@ -94,4 +94,5 @@ export interface OrderRepository extends OrderTrackingRepository, ActiveOrderTra
   ): Promise<Order>
   returnOrder(orderId: string, driverId: string, expectedVersion: number, actor: Actor, correlationId: string): Promise<Order>
   confirmReturn(orderId: string, driverId: string, expectedVersion: number, actor: Actor, correlationId: string): Promise<Order>
+  unassign(orderId: string, driverId: string, expectedVersion: number, actor: Actor, correlationId: string): Promise<Order>
 }

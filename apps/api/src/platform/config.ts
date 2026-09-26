@@ -87,6 +87,10 @@ const envSchema = z.object({
   ).transform((value) => value === 'true'),
   SUPABASE_URL: z.string().min(1),
   SUPABASE_SECRET_KEY: z.string().min(1),
+  // Plain 8-4-4-4-12 hex shape, not Zod's RFC4122-strict `.uuid()`: this
+  // codebase's seed/fixture ids (e.g. zones' 11111111-…) set version/variant
+  // nibbles Postgres itself never validates, and Zod's strict check rejects.
+  DRIVER_SIGNUP_ZONE_ID: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i),
   VALKEY_URL: z.string().min(1),
   DISPATCH_OFFER_TTL_SECONDS: z.coerce.number().int().positive().default(60),
   PGBOSS_DATABASE_URL: z.string().min(1),

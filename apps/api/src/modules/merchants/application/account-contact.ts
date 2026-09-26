@@ -1,6 +1,5 @@
 import type { MerchantAccountContactRepository } from '../ports/merchant-repository.js'
-
-export type MerchantAccountContact = { firstName: string; lastName: string; phone: string }
+import type { MerchantAccountContact } from '../domain/merchant.js'
 
 export class UpdateMerchantAccountContactUseCase {
   public constructor(private readonly contacts: MerchantAccountContactRepository) {}

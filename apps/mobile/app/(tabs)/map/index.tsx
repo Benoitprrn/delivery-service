@@ -1,9 +1,9 @@
 import { Camera, GeoJSONSource, Layer, Map, Marker, type CameraRef } from '@maplibre/maplibre-react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { ChevronLeft, ChevronRight, MapPin } from 'lucide-react-native';
+import { MapPin } from 'lucide-react-native';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View, type LayoutChangeEvent, type ViewToken, useWindowDimensions } from 'react-native';
+import { StyleSheet, Text, View, type LayoutChangeEvent, type ViewToken, useWindowDimensions } from 'react-native';
 import { FlatList } from 'react-native-gesture-handler';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Socket } from 'socket.io-client';
@@ -14,7 +14,7 @@ import { OrderCard } from '../../../components/order-card';
 import { api, ApiError, type OrderRouteGeometry } from '../../../lib/api';
 import { syncLocationTrackingProfile } from '../../../lib/location-tracking';
 import { useAvailability } from '../../../lib/availability-context';
-import { BLUE_500, EMERALD_600, STONE_800, WHITE } from '../../../lib/colors';
+import { BLUE_500, EMERALD_600, RED_700, WHITE } from '../../../lib/colors';
 import type { DriverOrder } from '../../../lib/orders-types';
 import { getSocket } from '../../../lib/socket';
 import { supabase } from '../../../lib/supabase';
@@ -43,9 +43,6 @@ const CAMERA_SIDE_MARGIN = 32;
 const CAMERA_BOTTOM_SAFETY_MARGIN = 24;
 const FIT_BOUNDS_DURATION = 500;
 const EASE_TO_DURATION = 300;
-const HEADER_ARROW_SIZE = 52;
-const HEADER_ICON_SIZE = 24;
-
 type Bounds = [west: number, south: number, east: number, north: number];
 
 // null si 0/1 commande ou si toutes les commandes partagent exactement les
@@ -97,12 +94,6 @@ function computeOrderCamera(order: DriverOrder, viewportWidth: number, viewportH
 
 const ACTIVE_STATUSES = new Set(['ASSIGNED', 'COLLECTED', 'RETURNING']);
 
-function buildHeaderLabel(count: number): string {
-  if (count === 0) return 'Aucune course en cours';
-  const noun = count === 1 ? 'course en cours' : 'courses en cours';
-  return `${count} ${noun}`;
-}
-
 export default function MyOrdersMapScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -119,8 +110,6 @@ export default function MyOrdersMapScreen() {
   const [routeGeometryByOrderId, setRouteGeometryByOrderId] = useState<Record<string, OrderRouteGeometry>>({});
   const listRef = useRef<FlatList<DriverOrder>>(null);
   const cameraRef = useRef<CameraRef>(null);
-  // Conserver cette position dans la séquence des hooks : elle existe depuis
-  // l'écran Carte initial et évite un désalignement lors du Fast Refresh.
   const { available } = useAvailability();
   // true seulement après qu'un fitBounds (ou un easeTo de secours pour 0/1
   // commande) a été appliqué pour la liste courante — évite que l'effet de
@@ -338,9 +327,6 @@ export default function MyOrdersMapScreen() {
     );
   }
 
-  const canGoPrevious = visibleOrders.length > 0 && selectedIndex > 0;
-  const canGoNext = visibleOrders.length > 0 && selectedIndex < visibleOrders.length - 1;
-
   return (
     <View className="flex-1">
       <StatusBar style="dark" />
@@ -397,36 +383,11 @@ export default function MyOrdersMapScreen() {
         )}
       </Map>
 
-      {/* Bloc blanc unifié : safe area top + header navigation, un seul
-          conteneur continu au-dessus de la carte. */}
+      {/* Bloc blanc unifié : safe area top + disponibilité du livreur. */}
       <View className="absolute left-0 right-0 top-0 z-10 bg-white" style={{ paddingTop: insets.top }}>
-        <View className="h-14 flex-row items-center px-1">
-          <Pressable
-            onPress={() => moveToIndex(selectedIndex - 1)}
-            disabled={!canGoPrevious}
-            hitSlop={8}
-            className="items-center justify-center rounded-full disabled:opacity-30"
-            style={{ width: HEADER_ARROW_SIZE, height: HEADER_ARROW_SIZE }}
-          >
-            <ChevronLeft size={HEADER_ICON_SIZE} color={STONE_800} />
-          </Pressable>
-          <Text className="flex-1 text-center font-sans-semibold text-sm text-stone-800" numberOfLines={1}>
-            {buildHeaderLabel(visibleOrders.length)}
-          </Text>
-          <Pressable
-            onPress={() => moveToIndex(selectedIndex + 1)}
-            disabled={!canGoNext}
-            hitSlop={8}
-            className="items-center justify-center rounded-full disabled:opacity-30"
-            style={{ width: HEADER_ARROW_SIZE, height: HEADER_ARROW_SIZE }}
-          >
-            <ChevronRight size={HEADER_ICON_SIZE} color={STONE_800} />
-          </Pressable>
-        </View>
+        <AvailabilityToggle />
         <PayoutBanner />
       </View>
-
-      <AvailabilityToggle />
 
       {/* Card flottante sur la carte, au-dessus du tab bar. Pas de
           TAB_BAR_HEIGHT/insets.bottom ici : le bas de cet écran est déjà
@@ -442,15 +403,19 @@ export default function MyOrdersMapScreen() {
         }}
       >
         {visibleOrders.length === 0 ? (
-          <View className="w-[90%] self-center rounded-2xl border border-border bg-surface p-3 shadow-sm">
-            <View className="items-center gap-1">
-              <MapPin size={20} color={EMERALD_600} />
-              <Text className="text-center font-sans-semibold text-sm text-stone-800">Aucune course en cours</Text>
-              <Text className="text-center font-sans text-sm text-stone-500">
-                {available
-                  ? 'Restez disponible pour recevoir une proposition de course'
-                  : 'Mettez-vous disponible pour recevoir des commandes'}
-              </Text>
+          <View className="w-[90%] self-center rounded-2xl border border-border bg-surface p-4 shadow-sm">
+            <View className="flex-row items-start gap-3">
+              <View className={`h-12 w-12 items-center justify-center rounded-full ${available ? 'bg-primary-100' : 'bg-status-cancelled-bg'}`}>
+                <MapPin size={22} color={available ? EMERALD_600 : RED_700} />
+              </View>
+              <View className="flex-1 gap-1">
+                <Text className="font-sans-bold text-body-lg text-stone-800">Vous n’avez aucune course</Text>
+                <Text className="font-sans text-body text-stone-500">
+                  {available
+                    ? 'Restez disponible pour recevoir de nouvelles courses.'
+                    : 'Activez votre disponibilité pour recevoir des commandes.'}
+                </Text>
+              </View>
             </View>
           </View>
         ) : (

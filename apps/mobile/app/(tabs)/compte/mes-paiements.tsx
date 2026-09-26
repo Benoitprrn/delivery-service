@@ -17,7 +17,7 @@ function Summary({ label, amount, alert = false }: { label: string; amount: numb
   return <View className="flex-1 gap-1 rounded-xl border border-border bg-surface p-3"><Text className="font-sans text-body text-stone-600">{label}</Text><Text className={`font-sans-bold text-body-lg ${alert ? 'text-red-700' : 'text-stone-800'}`}>{formatPriceEuros(amount)}</Text></View>;
 }
 
-export default function WalletScreen() {
+export default function PaymentsScreen() {
   const router = useRouter();
   const { status: payoutStatus } = usePayoutAccount();
   const [settlements, setSettlements] = useState<DriverSettlementsResponse | null>(null);
@@ -45,7 +45,20 @@ export default function WalletScreen() {
       </View>}
       ListEmptyComponent={<EmptyState message="Aucune période clôturée pour l’instant." />}
       renderItem={({ item }) => <Pressable accessibilityLabel={`Voir la période ${formatSettlementPeriod(item.periodStart, item.periodEnd)}`} onPress={() => router.push(`/paiements/periode/${item.periodId}`)} className="min-h-touch-comfortable flex-row items-center gap-3 rounded-xl border border-border bg-surface p-4 active:bg-stone-50"><View className="flex-1 gap-1"><View className="flex-row items-center gap-2"><Text className="font-sans-semibold text-body-lg text-stone-800">{formatSettlementPeriod(item.periodStart, item.periodEnd)}</Text>{item.unpaidByRestaurantCents > 0 && <CircleAlert accessibilityLabel="Paiement d’un restaurant en attente" size={20} color={RED_700} />}</View><Text className="font-sans text-body text-stone-600">Total {formatPriceEuros(item.totalCents)} · envoyé {formatPriceEuros(item.sentCents)}</Text><Text className="font-sans text-body text-stone-600">En attente {formatPriceEuros(item.pendingCents)}</Text></View><ChevronRight size={22} color="#78716C" /></Pressable>}
-      ListFooterComponent={<View className="gap-3 pt-3"><Text className="font-sans-bold text-h3 text-stone-800">Compte de paiement</Text>{payoutStatus.kind === 'ok' ? <PayoutStatusCard ui={derivePayoutUi(payoutStatus.account)} /> : <Text className="font-sans text-body-lg text-stone-500">{payoutStatus.kind === 'loading' ? 'Chargement de votre compte de paiement…' : payoutStatus.message}</Text>}<Pressable accessibilityLabel="Ouvrir les versements et transactions" onPress={() => router.push('/paiements/versements')} className="h-touch-comfortable items-center justify-center rounded-lg border border-border bg-surface active:opacity-70"><Text className="font-sans-semibold text-body-lg text-primary-700">Versements et transactions</Text></Pressable>{payoutStatus.kind === 'ok' && derivePayoutUi(payoutStatus.account).ready ? <Pressable accessibilityLabel="Ouvrir mon espace Stripe complet" onPress={() => void openStripeDashboard()} className="h-touch-comfortable items-center justify-center rounded-lg border border-border bg-surface active:opacity-70"><Text className="font-sans-semibold text-body-lg text-primary-700">Mon espace Stripe complet</Text></Pressable> : null}</View>}
+      ListFooterComponent={<View className="gap-3 pt-3">
+        <Text className="font-sans-bold text-h3 text-stone-800">Compte de paiement</Text>
+        {payoutStatus.kind === 'ok' ? <PayoutStatusCard ui={derivePayoutUi(payoutStatus.account)} /> : <Text className="font-sans text-body-lg text-stone-500">{payoutStatus.kind === 'loading' ? 'Chargement de votre compte de paiement…' : payoutStatus.message}</Text>}
+        {payoutStatus.kind === 'ok' ? (
+          derivePayoutUi(payoutStatus.account).ready ? (
+            <>
+              <Pressable accessibilityLabel="Ouvrir l’historique des virements" onPress={() => router.push('/paiements/versements')} className="h-touch-comfortable items-center justify-center rounded-lg border border-border bg-surface active:opacity-70"><Text className="font-sans-semibold text-body-lg text-primary-700">Historique des virements</Text></Pressable>
+              <Pressable accessibilityLabel="Gérer mes paiements sur Stripe" onPress={() => void openStripeDashboard()} className="h-touch-comfortable items-center justify-center rounded-lg bg-primary-600 active:bg-primary-700"><Text className="font-sans-bold text-body-lg text-white">Gérer mes paiements</Text></Pressable>
+            </>
+          ) : (
+            <Pressable accessibilityLabel="Configurer mon compte" onPress={() => router.push('/paiements')} className="h-touch-comfortable items-center justify-center rounded-lg bg-primary-600 active:bg-primary-700"><Text className="font-sans-bold text-body-lg text-white">Configurer mon compte</Text></Pressable>
+          )
+        ) : null}
+      </View>}
     />
   </SafeAreaView>;
 }

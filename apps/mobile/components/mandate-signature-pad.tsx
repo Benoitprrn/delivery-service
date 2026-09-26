@@ -63,7 +63,7 @@ export function MandateSignaturePad({ onSubmit, disabled = false }: Props) {
           disabled={busy || isEmpty}
           className="h-touch-comfortable flex-1 items-center justify-center rounded-lg bg-primary-600 active:bg-primary-700 disabled:opacity-50"
         >
-          {isSubmitting ? <ActivityIndicator color={WHITE} /> : <Text className="font-sans-bold text-body-lg text-white">Signer et accepter</Text>}
+          {isSubmitting ? <ActivityIndicator color={WHITE} /> : <Text className="font-sans-bold text-body-lg text-white">Signer</Text>}
         </Pressable>
       </View>
     </View>

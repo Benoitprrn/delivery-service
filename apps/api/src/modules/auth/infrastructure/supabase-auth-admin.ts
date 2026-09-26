@@ -1,4 +1,4 @@
-import { AccountAlreadyExistsError, AuthProviderError } from '../domain/auth-admin-errors.js'
+import { AccountAlreadyExistsError, AuthProviderError, AuthProviderUnknownOutcomeError } from '../domain/auth-admin-errors.js'
 import type { AuthAdmin, AuthUserLookup, CreateAuthUserInput } from '../ports/auth-admin.js'
 
 export class SupabaseAuthAdmin implements AuthAdmin, AuthUserLookup {
@@ -21,6 +21,7 @@ export class SupabaseAuthAdmin implements AuthAdmin, AuthUserLookup {
     const message = typeof body?.msg === 'string' ? body.msg : typeof body?.message === 'string' ? body.message : ''
     // GoTrue's duplicate response is 422 with "User already registered".
     if (response.status === 422 && /already registered|already exists/i.test(message)) throw new AccountAlreadyExistsError()
+    if (response.status >= 500) throw new AuthProviderUnknownOutcomeError('Supabase Auth creation outcome is unknown')
     throw new AuthProviderError(`Supabase Auth admin user creation failed with status ${response.status}`)
   }
 
@@ -48,7 +49,8 @@ export class SupabaseAuthAdmin implements AuthAdmin, AuthUserLookup {
         }
       })
     } catch {
-      throw new AuthProviderError('Supabase Auth admin request failed')
+      // fetch has no delivery acknowledgement for these failures.
+      throw new AuthProviderUnknownOutcomeError('Supabase Auth admin request outcome is unknown')
     }
   }
 }

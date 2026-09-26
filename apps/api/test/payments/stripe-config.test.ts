@@ -3,7 +3,7 @@ import { loadConfig } from '../../src/platform/config.js'
 import { createStripeProvider } from '../../src/modules/payments/public.js'
 
 const base = {
-  NODE_ENV:'production', DATABASE_URL:'postgres://db', PGBOSS_DATABASE_URL:'postgres://boss', OSRM_URL:'http://osrm', VROOM_URL:'http://vroom', OPENCAGE_API_KEY:'key', SUPABASE_URL:'http://supabase', SUPABASE_SECRET_KEY:'secret', VALKEY_URL:'redis://valkey'
+  NODE_ENV:'production', DATABASE_URL:'postgres://db', PGBOSS_DATABASE_URL:'postgres://boss', OSRM_URL:'http://osrm', VROOM_URL:'http://vroom', OPENCAGE_API_KEY:'key', SUPABASE_URL:'http://supabase', SUPABASE_SECRET_KEY:'secret', DRIVER_SIGNUP_ZONE_ID:'11111111-1111-1111-1111-111111111111', VALKEY_URL:'redis://valkey'
 }
 
 describe('Stripe production configuration', () => {

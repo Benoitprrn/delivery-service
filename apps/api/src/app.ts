@@ -5,10 +5,10 @@ import fastifyStatic from '@fastify/static'
 import { fileURLToPath } from 'node:url'
 import { join, dirname } from 'node:path'
 import { createMerchantsModule, createSireneProvider, isMerchantLegalInformationComplete, registerMerchantHttpRoutes, SupabaseMerchantLogoStorage } from './modules/merchants/public.js'
-import { createAuthModule } from './modules/auth/public.js'
+import { createAuthModule, PostgresAccountPhoneRegistry } from './modules/auth/public.js'
 import { createDriversModule, registerDriverHttpRoutes } from './modules/drivers/public.js'
 import { createDocumentsModule, registerAccountDocumentHttpRoutes } from './modules/documents/public.js'
-import { createMerchantSettlementReadiness, createOrdersModule, registerOrderHttpRoutes, type DriverEligibility, type DriverInvoiceReadiness, type MerchantSettlementReadinessReader, PostgresDriverInvoiceReadinessReader } from './modules/orders/public.js'
+import { createMerchantSettlementReadiness, createOrdersModule, registerOrderHttpRoutes, type DriverEligibility, type DriverInvoiceReadiness, type DriverCompanyProfileReadiness, type DriverMandateReadiness, type MerchantSettlementReadinessReader, PostgresDriverInvoiceReadinessReader } from './modules/orders/public.js'
 import { AcceptDriverEInvoiceMandateUseCase, createInvoicesModule, DriverEInvoiceReadiness, GetDriverEInvoiceMandatePdfUrlUseCase, GetDriverEInvoiceMandateStatusUseCase, GetInvoiceDocumentFileUseCase, InvoiceIssuanceDeferredError, PdfLibMandatePdfRenderer, PollEInvoiceEventsUseCase, PollEInvoiceMandatesUseCase, PostgresDriverEInvoiceMandateRepository, PostgresDriverEInvoiceReadinessReader, PostgresEInvoiceDirectoryCacheRepository, PostgresEInvoiceEventsRepository, PostgresEInvoiceMandateWorkRepository, PostgresEInvoiceWorkRepository, PostgresMandateTemplateRepository, PostgresPlatformLegalIdentityReader, RefreshBuyerElectronicAddressUseCase, registerInvoiceHttpRoutes, RunEInvoiceMandateSubmissionsUseCase, RunEInvoiceSubmissionsUseCase, startEInvoiceMandatePollingWorker, startEInvoiceMandateSubmissionWorker, startEInvoicePollingWorker, startEInvoiceSubmissionWorker, SupabaseEInvoiceDocumentStorage, SupabaseEInvoiceMandateStorage, SuperPdpEInvoiceMandateProvider, SuperPdpEInvoiceProvider, SuperPdpFrenchDirectoryProvider, SuperPdpOAuthClient } from './modules/invoices/public.js'
 import { DecideDriverReversalUseCase, GetAdminOverviewUseCase, GetDriverSettlementsUseCase, GetMerchantSettlementDetailUseCase, GetMerchantSettlementsUseCase, OrdersCurrentWeekEstimator, PostgresSettlementReadRepository, registerSettlementReadRoutes, RequestDriverReversalUseCase, type SettlementDirectory, CloseSettlementPeriodUseCase, DriverPayoutAccountUseCases, PostgresDebitOpsRepository, PostgresDebitRetryRepository, PostgresReconciliationRepository, PostgresSettlementEventRepository, ProcessSettlementWebhooksUseCase, ReceiveSettlementWebhookUseCase, RequestDebitRetryUseCase, registerSettlementAdminRoutes, RunSettlementReconciliationUseCase, startIntervalWorker, StripeChargeIncidentReader, StripeReconciliationReader, PostgresDriverConnectRepository, ExecuteDriverReversalsUseCase, PostgresDriverPayoutRepository, PostgresDriverReversalRepository, PostgresPreNotificationRepository, PostgresSepaDebitRepository, ProviderDriverAccountLiveReader, RunDriverPayoutsUseCase, startDriverPayoutWorker, startDriverReversalWorker, StripeDriverReversalProvider, StripeDriverTransferProvider, PostgresSettlementCloseRepository, RunSepaDebitsUseCase, startSepaDebitWorker, StripeSepaDebitProvider, ResendEmailSender, SendPreNotificationsUseCase, startSettlementCloseWorker, startSettlementPreNotificationWorker, PostgresDriverPayoutReadinessReader, registerDriverPayoutRoutes, StripeDriverConnectProvider, UnavailableDriverConnectProvider, type DriverConnectProvider, PostgresServiceRefundRepository, RunServiceRefundsUseCase, startServiceRefundWorker, StripeMerchantServiceRefundProvider } from './modules/settlements/public.js'
 import { createDispatchModule, registerDispatchHttpRoutes } from './modules/dispatch/public.js'
@@ -33,7 +33,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 
 // `overrides` sert aux tests : injecter un provider Connect fake (aucun réseau Stripe) et, pour les tests HTTP qui créent des
 // commandes sans données de règlement en base, une garde D-D de remplacement (jamais utilisée en production).
-export async function buildApp(overrides: { connectProvider?: ConnectPaymentsProvider; merchantSettlementReadiness?: MerchantSettlementReadinessReader; driverEligibility?: DriverEligibility; driverInvoiceReadiness?: DriverInvoiceReadiness; driverConnectProvider?: DriverConnectProvider } = {}): Promise<FastifyInstance> {
+export async function buildApp(overrides: { connectProvider?: ConnectPaymentsProvider; merchantSettlementReadiness?: MerchantSettlementReadinessReader; driverEligibility?: DriverEligibility; driverInvoiceReadiness?: DriverInvoiceReadiness; driverCompanyProfileReadiness?: DriverCompanyProfileReadiness; driverMandateReadiness?: DriverMandateReadiness; driverConnectProvider?: DriverConnectProvider } = {}): Promise<FastifyInstance> {
   // Fastify instancie son propre logger Pino à partir des options — passer une
   // instance pino déjà construite (loggerInstance) provoque un conflit de type
   // FastifyBaseLogger / pino.Logger sous exactOptionalPropertyTypes.
@@ -56,6 +56,11 @@ export async function buildApp(overrides: { connectProvider?: ConnectPaymentsPro
 
   const geocoding = createGeocodingModule(config.OPENCAGE_API_KEY)
   const zones = createZonesModule(pool)
+  // Required at startup so a malformed deployment never defers this failure to
+  // a public request. The FK remains the final transactional guard.
+  if (await zones.findZoneById(config.DRIVER_SIGNUP_ZONE_ID) === null) {
+    throw new Error('DRIVER_SIGNUP_ZONE_ID does not reference an existing zone')
+  }
   const sirene = createSireneProvider(config.INSEE_API_KEY)
   let refreshBuyerElectronicAddress: (input: { merchantId: string; siren: string }) => void = () => undefined
   let electronicInvoicingStatusReader: { getStatus: (merchantId: string) => Promise<'available' | 'unavailable' | 'unknown'> } = { getStatus: async () => 'unknown' }
@@ -64,6 +69,8 @@ export async function buildApp(overrides: { connectProvider?: ConnectPaymentsPro
   let isDriverAvailable: (driverId: string) => Promise<boolean> = async () => false
   let incrementDriverCapacity: (driverId: string) => Promise<number> = async () => 0
   let decrementDriverCapacity: (driverId: string) => Promise<number> = async () => 0
+  let isDriverCompanyProfileComplete: (driverId: string) => Promise<boolean> = async () => false
+  let isDriverMandateSigned: (driverId: string) => Promise<boolean> = async () => false
   let cardPaymentsReady: (merchantId: string) => Promise<boolean> = async () => false
   // Journal des webhooks plateforme du règlement (R70) : liaison tardive, sans effet tant que le worker n'est pas activé.
   let settlementEventSink: (event: VerifiedPlatformEvent) => Promise<unknown> = async () => undefined
@@ -78,9 +85,10 @@ export async function buildApp(overrides: { connectProvider?: ConnectPaymentsPro
     decrement: async (driverId) => { await decrementDriverCapacity(driverId) }
   }, { isReady: (merchantId) => cardPaymentsReady(merchantId) }, {
     check: (merchantId) => merchantSettlementReady.check(merchantId)
-  }, overrides.driverEligibility ?? { isEligible: (driverId) => driverPayoutReadiness.isReady(driverId) }, driverInvoiceReadiness)
+  }, overrides.driverEligibility ?? { isEligible: (driverId) => driverPayoutReadiness.isReady(driverId) }, driverInvoiceReadiness, overrides.driverCompanyProfileReadiness ?? { isReady: (driverId) => isDriverCompanyProfileComplete(driverId) }, overrides.driverMandateReadiness ?? { isReady: (driverId) => isDriverMandateSigned(driverId) })
   const invoices = createInvoicesModule(pool, config.SUPERPDP_ELECTRONIC_ADDRESS_SCHEME)
   electronicInvoicingStatusReader = { getStatus: invoices.getElectronicInvoicingStatus }
+  isDriverMandateSigned = invoices.hasSignedMandate
   const superPdpProvider = config.SUPERPDP_ENABLED && config.SUPERPDP_CLIENT_ID !== undefined && config.SUPERPDP_CLIENT_SECRET !== undefined
     ? new SuperPdpEInvoiceProvider(config.SUPERPDP_API_BASE_URL, new SuperPdpOAuthClient(config.SUPERPDP_API_BASE_URL, config.SUPERPDP_CLIENT_ID, config.SUPERPDP_CLIENT_SECRET))
     : null
@@ -108,7 +116,8 @@ export async function buildApp(overrides: { connectProvider?: ConnectPaymentsPro
   const drivers = createDriversModule(pool, valkey, (driverId, available) => syncDriverPresence(driverId, available), {
     activeOrders: { findActiveTrackingTokensByDriverId: orders.findActiveTrackingTokensByDriverId },
     emitter: { emitTrackingPosition: (trackingToken, position) => emitTrackingPosition(trackingToken, position) }
-  })
+  }, { auth: auth.admin, phones: new PostgresAccountPhoneRegistry(), zoneId: config.DRIVER_SIGNUP_ZONE_ID })
+  isDriverCompanyProfileComplete = async (driverId) => (await drivers.getCompanyProfileStatus(driverId)).complete
   const documents = createDocumentsModule(pool, config.SUPABASE_URL, config.SUPABASE_SECRET_KEY, app.log)
   const mandateRepository = new PostgresDriverEInvoiceMandateRepository(pool)
   const mandateTemplateRepository = new PostgresMandateTemplateRepository(pool)
@@ -337,7 +346,7 @@ export async function buildApp(overrides: { connectProvider?: ConnectPaymentsPro
   await app.register(registerDriverHttpRoutes, { drivers })
   await app.register(registerAccountDocumentHttpRoutes, { documents })
   await app.register(registerOrderHttpRoutes, { orders, findMerchantById, findZoneById, findDriverById })
-  await app.register(registerInvoiceHttpRoutes, { getOrderDocuments: invoices.getOrderDocuments, getInvoiceDocumentFile: getInvoiceDocumentFile.execute.bind(getInvoiceDocumentFile), acceptDriverEInvoiceMandate: acceptDriverEInvoiceMandate.execute.bind(acceptDriverEInvoiceMandate), getDriverEInvoiceMandateStatus: getDriverEInvoiceMandateStatus.execute.bind(getDriverEInvoiceMandateStatus), getDriverEInvoiceMandatePdfUrl: getDriverEInvoiceMandatePdfUrl.execute.bind(getDriverEInvoiceMandatePdfUrl) })
+  await app.register(registerInvoiceHttpRoutes, { getOrderDocuments: invoices.getOrderDocuments, getDriverInvoices: invoices.getDriverInvoices, getInvoiceDocumentFile: getInvoiceDocumentFile.execute.bind(getInvoiceDocumentFile), acceptDriverEInvoiceMandate: acceptDriverEInvoiceMandate.execute.bind(acceptDriverEInvoiceMandate), getDriverEInvoiceMandateStatus: getDriverEInvoiceMandateStatus.execute.bind(getDriverEInvoiceMandateStatus), getDriverEInvoiceMandatePdfUrl: getDriverEInvoiceMandatePdfUrl.execute.bind(getDriverEInvoiceMandatePdfUrl) })
   await app.register(registerCashOnDeliveryHttpRoutes, { completion })
   await app.register(registerCardPaymentsHttpRoutes, { cardPayments })
   await app.register(registerDispatchHttpRoutes, { dispatch })

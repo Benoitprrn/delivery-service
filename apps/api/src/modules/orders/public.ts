@@ -6,11 +6,14 @@ import type { CardPaymentsReadiness } from './ports/card-payments-readiness.js'
 import type { MerchantSettlementReadinessReader } from './ports/merchant-settlement-readiness.js'
 import type { DriverEligibility } from './ports/driver-eligibility.js'
 import type { DriverInvoiceReadiness } from './ports/driver-invoice-readiness.js'
+import type { DriverCompanyProfileReadiness } from './ports/driver-company-profile-readiness.js'
+import type { DriverMandateReadiness } from './ports/driver-mandate-readiness.js'
 import { AssignOrderUseCase } from './application/assign-order.js'
 import { CollectOrderUseCase } from './application/collect-order.js'
 import { CompleteOrderUseCase } from './application/complete-order.js'
 import { VerifyDeliveryCodeForCompletionUseCase } from './application/verify-delivery-code-for-completion.js'
 import { ConfirmReturnUseCase, ReturnOrderUseCase } from './application/return-order.js'
+import { UnassignOrderUseCase } from './application/unassign-order.js'
 import { CreateOrderUseCase } from './application/create-order.js'
 import { EstimateOrderUseCase } from './application/estimate-order.js'
 import { GetMerchantOrdersUseCase } from './application/get-merchant-orders.js'
@@ -47,6 +50,8 @@ export {
   CardPaymentsNotReadyError,
   DriverPayoutAccountNotReadyError,
   DriverInvoiceInformationNotReadyError,
+  DriverCompanyProfileNotReadyError,
+  DriverMandateNotReadyError,
   MerchantPaymentSetupIncompleteError,
   CashOnDeliveryNotRequiredError,
   CashOnDeliveryPaymentRequiredError,
@@ -66,6 +71,8 @@ export { createMerchantSettlementReadiness } from './infrastructure/merchant-set
 export type { MerchantSettlementReadiness, MerchantSettlementReadinessReader } from './ports/merchant-settlement-readiness.js'
 export type { DriverEligibility } from './ports/driver-eligibility.js'
 export type { DriverInvoiceReadiness } from './ports/driver-invoice-readiness.js'
+export type { DriverCompanyProfileReadiness } from './ports/driver-company-profile-readiness.js'
+export type { DriverMandateReadiness } from './ports/driver-mandate-readiness.js'
 export { PostgresDriverInvoiceReadinessReader } from './infrastructure/postgres-driver-invoice-readiness.js'
 export { GROUPAGE_WINDOW_MINUTES } from './domain/dispatch.js'
 export type { DispatchAttempt, DispatchMetadata } from './domain/dispatch.js'
@@ -87,7 +94,11 @@ export function createOrdersModule(
   cardPaymentsReadiness: CardPaymentsReadiness = { isReady: async () => true },
   settlementReadiness: MerchantSettlementReadinessReader = { check: async () => ({ ready: true }) },
   driverEligibility: DriverEligibility = { isEligible: async () => true },
-  driverInvoiceReadiness: DriverInvoiceReadiness = { isReady: async () => true }
+  driverInvoiceReadiness: DriverInvoiceReadiness = { isReady: async () => true },
+  // Défaut permissif réservé aux tests du module : `app.ts` injecte toujours la vraie garde D-CP (fail-closed).
+  driverCompanyProfileReadiness: DriverCompanyProfileReadiness = { isReady: async () => true },
+  // Défaut permissif réservé aux tests du module : `app.ts` injecte toujours la vraie garde D-MD (fail-closed).
+  driverMandateReadiness: DriverMandateReadiness = { isReady: async () => true }
 ) {
   const pricingSettings = createPricingSettingsReader(pool)
   const repository = new PostgresOrderRepository(pool, pricingSettings)
@@ -100,13 +111,14 @@ export function createOrdersModule(
   const getDriverEarningsUseCase = new GetDriverEarningsUseCase(repository)
   const getOrderRouteUseCase = new GetOrderRouteUseCase(repository, routingProvider)
   const getOrderTrackingUseCase = new GetOrderTrackingUseCase(repository)
-  const listAvailableOrdersUseCase = new ListAvailableOrdersUseCase(repository, availabilityReader, driverEligibility, driverInvoiceReadiness)
-  const assignOrderUseCase = new AssignOrderUseCase(repository, capacityWriter, driverEligibility, driverInvoiceReadiness)
+  const listAvailableOrdersUseCase = new ListAvailableOrdersUseCase(repository, availabilityReader, driverEligibility, driverInvoiceReadiness, driverCompanyProfileReadiness, driverMandateReadiness)
+  const assignOrderUseCase = new AssignOrderUseCase(repository, capacityWriter, driverEligibility, driverInvoiceReadiness, driverCompanyProfileReadiness, driverMandateReadiness)
   const collectOrderUseCase = new CollectOrderUseCase(repository)
   const completeOrderUseCase = new CompleteOrderUseCase(repository, capacityWriter)
   const verifyDeliveryCodeForCompletionUseCase = new VerifyDeliveryCodeForCompletionUseCase(repository)
   const returnOrderUseCase = new ReturnOrderUseCase(repository)
   const confirmReturnUseCase = new ConfirmReturnUseCase(repository, capacityWriter)
+  const unassignOrderUseCase = new UnassignOrderUseCase(repository, capacityWriter)
 
   return {
     createOrder: createOrderUseCase.execute.bind(createOrderUseCase),
@@ -136,6 +148,7 @@ export function createOrdersModule(
     completeCollectedCashOnDeliveryInTransaction: repository.completeCollectedCashOnDeliveryInTransaction.bind(repository),
     releaseDriverCapacity: capacityWriter.decrement.bind(capacityWriter),
     returnOrder: returnOrderUseCase.execute.bind(returnOrderUseCase),
-    confirmReturn: confirmReturnUseCase.execute.bind(confirmReturnUseCase)
+    confirmReturn: confirmReturnUseCase.execute.bind(confirmReturnUseCase),
+    unassignOrder: unassignOrderUseCase.execute.bind(unassignOrderUseCase)
   }
 }

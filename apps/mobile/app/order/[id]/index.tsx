@@ -1,30 +1,28 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
   Bike,
-  CalendarDays,
   CircleX,
   Clock,
   Euro,
-  MapPin,
+  Package,
   PackageCheck,
-  Phone,
   Route,
-  Store,
   Undo2,
   X,
   CreditCard,
 } from 'lucide-react-native';
-import { ActivityIndicator, Linking, Pressable, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, Text, View } from 'react-native';
 import { useEffect, useState } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ApiError, api, type DriverOrderDocuments } from '../../../lib/api';
-import { EMERALD_600, STONE_500, WHITE } from '../../../lib/colors';
+import { BLUE_500, EMERALD_600, STONE_500, WHITE } from '../../../lib/colors';
+import { DetailsSection, PickupDeliverySummary, RecipientCard, SenderCard } from '../../../components/order-detail-sections';
+import { HoldActionButton } from '../../../components/hold-action-button';
 import { documentStatusLabel } from '../../../lib/document-status';
 import {
+  formatDeliveryTimeEstimate,
   formatDistanceKm,
   formatDurationMin,
-  formatEstimatedDelivery,
-  formatFullDate,
   formatPickupLabel,
   formatPriceEuros,
 } from '../../../lib/format';
@@ -32,7 +30,7 @@ import { openMaps, openPhone } from '../../../lib/native-links';
 import type { DriverOrder, OrderStatus } from '../../../lib/orders-types';
 import { showToast } from '../../../lib/toast';
 
-const RECIPIENT_VISIBLE_STATUSES = new Set(['COLLECTED', 'RETURNING', 'RETURNED', 'COMPLETED']);
+const RECIPIENT_VISIBLE_STATUSES = new Set(['COLLECTED', 'RETURNING', 'RETURNED']);
 
 function StatusBadge({ status }: { status: OrderStatus }) {
   if (status === 'ASSIGNED') {
@@ -106,6 +104,7 @@ export default function OrderDetailModal() {
   const order = parseOrder(orderParam);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [documents, setDocuments] = useState<DriverOrderDocuments | null>(null);
+  const [expandedSection, setExpandedSection] = useState<'order' | 'driver' | null>(null);
 
   useEffect(() => {
     if (order === null || order.status !== 'COMPLETED') return;
@@ -151,6 +150,31 @@ export default function OrderDetailModal() {
     });
   }
 
+  async function handleUnassign() {
+    if (order === null) return;
+    setIsSubmitting(true);
+    try {
+      await api.unassignOrder(order.id, order.version);
+      showToast('Course annulée');
+      router.back();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Impossible d’annuler la course.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  function confirmUnassign() {
+    Alert.alert(
+      'Annuler cette course ?',
+      'Elle repartira dans la recherche de livreur. Cette action est irréversible.',
+      [
+        { text: 'Retour', style: 'cancel' },
+        { text: 'Annuler la course', style: 'destructive', onPress: () => void handleUnassign() },
+      ],
+    );
+  }
+
   async function handleConfirmReturn() {
     if (order === null) return;
     setIsSubmitting(true);
@@ -182,23 +206,29 @@ export default function OrderDetailModal() {
   }
 
   const recipientVisible = RECIPIENT_VISIBLE_STATUSES.has(order.status);
-  const estimatedDelivery = formatEstimatedDelivery(order.collectedAt, order.durationS);
-  const statusDate =
-    (order.status === 'COMPLETED' || order.status === 'RETURNED') && order.completedAt !== null
-      ? order.completedAt
-      : order.updatedAt;
 
   return (
     <SafeAreaView className="flex-1 bg-background">
       <View className="flex-row items-center justify-between px-page-mobile py-3">
         <Text className="font-sans text-body-lg text-stone-400">#{order.publicReference}</Text>
-        <Pressable
-          accessibilityLabel="Fermer le détail de la commande"
-          onPress={() => router.back()}
-          className="h-touch-comfortable w-touch-comfortable items-center justify-center"
-        >
-          <X size={24} color="#57534E" />
-        </Pressable>
+        <View className="flex-row items-center gap-1">
+          {order.status === 'ASSIGNED' && (
+            <Pressable
+              onPress={confirmUnassign}
+              disabled={isSubmitting}
+              className="h-touch-comfortable items-center justify-center px-2 disabled:opacity-50"
+            >
+              <Text className="font-sans-semibold text-body text-red-600">Annuler</Text>
+            </Pressable>
+          )}
+          <Pressable
+            accessibilityLabel="Fermer le détail de la commande"
+            onPress={() => router.back()}
+            className="h-touch-comfortable w-touch-comfortable items-center justify-center"
+          >
+            <X size={24} color="#57534E" />
+          </Pressable>
+        </View>
       </View>
 
       <ScrollView
@@ -208,165 +238,81 @@ export default function OrderDetailModal() {
           gap: 20,
         }}
       >
-        <View className="gap-2">
-          <StatusBadge status={order.status} />
-          <View className="flex-row items-center gap-2">
-            <CalendarDays size={20} color={STONE_500} />
-            <Text className="font-sans text-body-lg text-stone-700">
-              {formatFullDate(statusDate)}
-            </Text>
-          </View>
-        </View>
+        <StatusBadge status={order.status} />
 
-        <View className="gap-3 rounded-2xl border border-border bg-surface p-4">
-          <View className="flex-row items-center gap-2">
-            <Store size={20} color={EMERALD_600} />
-            <View className="flex-1">
-              <Text className="font-sans-semibold text-body-lg text-stone-500">Expéditeur</Text>
-              <Text className="font-sans-bold text-h3 text-stone-800">{order.merchantName}</Text>
-            </View>
-          </View>
-
-          {order.merchantPhone !== null && order.merchantPhone.trim().length > 0 && (
-            <Pressable
-              accessibilityRole="link"
-              onPress={() => void openPhone(order.merchantPhone!)}
-              className="min-h-touch-comfortable flex-row items-center gap-2 border-t border-border pt-3 active:opacity-70"
-            >
-              <Phone size={20} color={EMERALD_600} />
-              <Text className="font-sans text-body-lg text-primary-700">{order.merchantPhone}</Text>
-            </Pressable>
-          )}
-
-          <Pressable
-            accessibilityRole="link"
-            onPress={() =>
-              void openMaps({
-                latitude: order.pickupLat,
-                longitude: order.pickupLng,
-                label: order.pickupAddress,
-              })
-            }
-            className="min-h-touch-comfortable flex-row items-start gap-2 border-t border-border pt-3 active:opacity-70"
-          >
-            <MapPin size={20} color={EMERALD_600} className="mt-0.5" />
-            <View className="flex-1">
-              <Text className="font-sans-semibold text-body-lg text-stone-500">
-                Adresse de ramassage
-              </Text>
-              <Text className="font-sans text-body-lg text-primary-700">{order.pickupAddress}</Text>
-            </View>
-          </Pressable>
-
-          <View className="flex-row items-center gap-2 border-t border-border pt-3">
-            <Clock size={20} color={EMERALD_600} />
-            <Text className="font-sans text-body-lg text-stone-800">
-              {formatPickupLabel(order.pickupScheduledAt, order.createdAt)}
-            </Text>
-          </View>
-        </View>
-
-        {recipientVisible && (
-          <View className="gap-3 rounded-2xl border border-border bg-surface p-4">
-            {order.customerName !== null && order.customerName.trim().length > 0 && (
-              <View className="flex-row items-center gap-2">
-                <MapPin size={20} color={STONE_500} />
-                <View className="flex-1">
-                  <Text className="font-sans-semibold text-body-lg text-stone-500">
-                    Destinataire
-                  </Text>
-                  <Text className="font-sans-bold text-h3 text-stone-800">
-                    {order.customerName}
-                  </Text>
-                </View>
-              </View>
-            )}
-
-            {order.customerPhone !== null && order.customerPhone.trim().length > 0 && (
-              <Pressable
-                accessibilityRole="link"
-                onPress={() => void openPhone(order.customerPhone!)}
-                className="min-h-touch-comfortable flex-row items-center gap-2 border-t border-border pt-3 active:opacity-70"
-              >
-                <Phone size={20} color={STONE_500} />
-                <Text className="font-sans text-body-lg text-primary-700">
-                  {order.customerPhone}
-                </Text>
-              </Pressable>
-            )}
-
-            <Pressable
-              accessibilityRole="link"
-              onPress={() =>
-                void openMaps({
-                  latitude: order.deliveryLat,
-                  longitude: order.deliveryLng,
-                  label: order.deliveryAddress,
-                })
-              }
-              className="min-h-touch-comfortable flex-row items-start gap-2 border-t border-border pt-3 active:opacity-70"
-            >
-              <MapPin size={20} color={STONE_500} className="mt-0.5" />
-              <View className="flex-1">
-                <Text className="font-sans-semibold text-body-lg text-stone-500">
-                  Adresse client
-                </Text>
-                <Text className="font-sans text-body-lg text-primary-700">
-                  {order.deliveryAddress}
-                </Text>
-                {order.deliveryAddressComplement !== null &&
-                  order.deliveryAddressComplement.trim().length > 0 && (
-                    <Text className="font-sans text-body-lg text-stone-500">
-                      {order.deliveryAddressComplement}
-                    </Text>
-                  )}
-              </View>
-            </Pressable>
-
-            {estimatedDelivery !== null && (
-              <View className="flex-row items-center gap-2 border-t border-border pt-3">
-                <Clock size={20} color={STONE_500} />
-                <Text className="font-sans text-body-lg text-stone-800">
-                  Livraison estimée {estimatedDelivery}
-                </Text>
-              </View>
-            )}
-          </View>
-        )}
-
-        {order.orderDetails !== null && order.orderDetails.trim().length > 0 && (
-          <View className="gap-1 rounded-2xl border border-border bg-surface p-4">
-            <Text className="font-sans-semibold text-body-lg text-stone-500">Détails commande</Text>
-            <Text className="font-sans text-body-lg text-stone-800">{order.orderDetails}</Text>
-          </View>
-        )}
-
-        {order.deliveryInstructions !== null && order.deliveryInstructions.trim().length > 0 && (
-          <View className="gap-1 rounded-2xl border border-border bg-surface p-4">
-            <Text className="font-sans-semibold text-body-lg text-stone-500">
-              Commentaire livreur
-            </Text>
-            <Text className="font-sans text-body-lg text-stone-800">
-              {order.deliveryInstructions}
-            </Text>
-          </View>
-        )}
+        <PickupDeliverySummary
+          pickupLabel={formatPickupLabel(order.pickupScheduledAt, order.createdAt)}
+          deliveryLabel={formatDeliveryTimeEstimate(order.pickupScheduledAt, order.createdAt, order.collectedAt, order.durationS)}
+        />
 
         {order.cashOnDelivery?.required === true && order.cashOnDelivery.amountCents !== null && (
-          <View className="mb-3 rounded-xl border border-border bg-stone-100 p-4">
-            <View className="flex-row items-center gap-2">
-              <CreditCard size={24} color={STONE_500} />
-              <Text className="flex-1 font-sans-bold text-h3 text-stone-800">
-                Paiement à la livraison — {formatPriceEuros(order.cashOnDelivery.amountCents)}
+          <View className="flex-row items-center gap-3 rounded-xl border border-accent-200 bg-accent-100 p-4">
+            <View className="h-11 w-11 items-center justify-center rounded-full bg-accent-200">
+              <CreditCard size={22} color="#B45309" />
+            </View>
+            <View className="flex-1 gap-0.5">
+              <Text className="font-sans-semibold text-body text-accent-800">Encaissement à la livraison</Text>
+              <Text className="font-sans text-body text-accent-700">
+                {order.cashOnDelivery.collected ? 'Encaissé par carte.' : 'À encaisser par carte au moment de la remise.'}
               </Text>
             </View>
-            <Text className="mt-1 font-sans text-body-lg text-stone-600">
-              {order.cashOnDelivery.collected
-                ? 'Encaissé par carte.'
-                : 'À encaisser par carte au moment de la remise, avec le code du client.'}
-            </Text>
+            <Text className="font-sans-bold text-body-lg text-accent-800">{formatPriceEuros(order.cashOnDelivery.amountCents)}</Text>
           </View>
         )}
+
+        <SenderCard
+          merchantName={order.merchantName}
+          merchantPhone={order.merchantPhone}
+          pickupAddress={order.pickupAddress}
+          onOpenPhone={(phone) => void openPhone(phone)}
+          onOpenMaps={() =>
+            void openMaps({ latitude: order.pickupLat, longitude: order.pickupLng, label: order.merchantName })
+          }
+        />
+
+        <RecipientCard
+          masked={!recipientVisible}
+          customerName={order.customerName}
+          customerPhone={order.customerPhone}
+          deliveryAddress={order.deliveryAddress}
+          deliveryAddressComplement={order.deliveryAddressComplement}
+          onOpenPhone={(phone) => void openPhone(phone)}
+          onOpenMaps={() =>
+            void openMaps({ latitude: order.deliveryLat, longitude: order.deliveryLng, label: order.deliveryAddress })
+          }
+        />
+
+        <DetailsSection
+          title="Détails commande"
+          icon={<Package size={20} color={EMERALD_600} />}
+          expanded={expandedSection === 'order'}
+          onToggle={() => setExpandedSection((current) => (current === 'order' ? null : 'order'))}
+        >
+          {order.orderDetails !== null && order.orderDetails.trim().length > 0 && (
+            <Text className="font-sans text-body-lg text-stone-800">{order.orderDetails}</Text>
+          )}
+        </DetailsSection>
+
+        <DetailsSection
+          title="Informations livreur"
+          icon={<Route size={20} color={BLUE_500} />}
+          expanded={expandedSection === 'driver'}
+          onToggle={() => setExpandedSection((current) => (current === 'driver' ? null : 'driver'))}
+        >
+          <View className="gap-1">
+            <Text className="font-sans-semibold text-body text-stone-500">Référence</Text>
+            <Text className="font-sans text-body-lg text-stone-800">#{order.publicReference}</Text>
+          </View>
+          {order.deliveryInstructions !== null && order.deliveryInstructions.trim().length > 0 && (
+            <View className="gap-1">
+              <Text className="font-sans-semibold text-body text-stone-500">Consignes de livraison</Text>
+              <Text className="rounded-lg bg-stone-100 p-3 font-sans text-body text-stone-700">
+                {order.deliveryInstructions}
+              </Text>
+            </View>
+          )}
+        </DetailsSection>
+
         {documents !== null && documents.invoices[0] !== undefined && (
           <View className="gap-3 rounded-2xl border border-border bg-surface p-4">
             <Text className="font-sans-semibold text-body-lg text-stone-500">Facturation</Text>
@@ -400,22 +346,21 @@ export default function OrderDetailModal() {
             ))}
           </View>
         )}
-        <View className="flex-row items-center justify-between rounded-2xl border border-border bg-surface p-4">
-          <View className="flex-row items-center gap-1.5">
-            <Route size={18} color={STONE_500} />
-            <Text className="font-sans text-body-lg text-stone-500">
-              {formatDistanceKm(order.distanceM)}
-            </Text>
+        <View className="flex-row gap-3 rounded-2xl border border-border bg-surface p-4">
+          <View className="flex-1 gap-1">
+            <Route size={20} color={STONE_500} />
+            <Text className="font-sans-semibold text-body text-stone-500">Distance</Text>
+            <Text className="font-sans-bold text-body-lg text-stone-800">{formatDistanceKm(order.distanceM)}</Text>
           </View>
-          <View className="flex-row items-center gap-1.5">
-            <Clock size={18} color={STONE_500} />
-            <Text className="font-sans text-body-lg text-stone-500">
-              {formatDurationMin(order.durationS)}
-            </Text>
+          <View className="flex-1 gap-1 border-l border-border pl-3">
+            <Clock size={20} color={BLUE_500} />
+            <Text className="font-sans-semibold text-body text-stone-500">Durée</Text>
+            <Text className="font-sans-bold text-body-lg text-stone-800">{formatDurationMin(order.durationS)}</Text>
           </View>
-          <View className="flex-row items-center gap-1.5">
+          <View className="flex-1 gap-1 border-l border-border pl-3">
             <Euro size={20} color={EMERALD_600} />
-            <Text className="font-sans-bold text-h3 text-primary-700">
+            <Text className="font-sans-semibold text-body text-stone-500">Gain</Text>
+            <Text className="font-sans-bold text-body-lg text-primary-700">
               {formatPriceEuros(order.deliveryCents ?? order.priceCents)}
             </Text>
           </View>
@@ -423,30 +368,23 @@ export default function OrderDetailModal() {
       </ScrollView>
 
       {order.status === 'ASSIGNED' && (
-        <View className="px-page-mobile pb-6 pt-2">
-          <Pressable
-            onPress={() => void handleCollect()}
+        <View className="flex-row px-page-mobile pb-6 pt-2">
+          <HoldActionButton
+            label="J&apos;ai collecté le colis"
+            variant="primary"
             disabled={isSubmitting}
-            className="h-touch-comfortable items-center justify-center rounded-lg bg-primary-600 active:bg-primary-700 disabled:opacity-50"
-          >
-            {isSubmitting ? (
-              <ActivityIndicator color={WHITE} />
-            ) : (
-              <Text className="font-sans-bold text-body-lg text-white">
-                J&apos;ai collecté le colis
-              </Text>
-            )}
-          </Pressable>
+            onComplete={handleCollect}
+          />
         </View>
       )}
       {order.status === 'COLLECTED' && (
-        <View className="px-page-mobile pb-6 pt-2">
-          <Pressable
-            onPress={handleComplete}
-            className="h-touch-comfortable items-center justify-center rounded-lg bg-primary-600 active:bg-primary-700"
-          >
-            <Text className="font-sans-bold text-body-lg text-white">Livraison effectuée</Text>
-          </Pressable>
+        <View className="flex-row px-page-mobile pb-6 pt-2">
+          <HoldActionButton
+            label="Livraison effectuée"
+            variant="primary"
+            disabled={isSubmitting}
+            onComplete={async () => handleComplete()}
+          />
         </View>
       )}
       {order.status === 'RETURNING' && (

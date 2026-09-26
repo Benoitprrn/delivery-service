@@ -97,6 +97,11 @@ de l'onboarding n'est pas construit, `onboarding_completed = false` ne bloque
 pas les commandes : seules les données opérationnelles réellement nécessaires
 sont exigées (voir `apps/api/CLAUDE.md`).
 
+L’inscription livreur publique est `POST /api/v1/auth/driver-signup` : identité,
+e-mail, téléphone français E.164, mot de passe fort et acceptation obligatoire.
+Elle place le livreur dans la zone configurée par `DRIVER_SIGNUP_ZONE_ID` et
+réserve atomiquement son téléphone entre les rôles dans `account_phone_registry`.
+
 Les informations légales et de facturation sont une section distincte : SIRET,
 identité légale, adresses postales structurées et TVA facultative. Sa
 complétude dérivée (`merchantLegalInformationCompleted`) reste également

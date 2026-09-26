@@ -107,6 +107,30 @@ export function formatEstimatedDelivery(collectedAt: string | null, durationS: n
   return `vers ${time.replace(':', 'h')}`;
 }
 
+// Estimation livraison utilisable avant ET après collecte : réelle (depuis collectedAt) une
+// fois collectée, sinon projetée depuis l'heure de collecte prévue/création (même commande
+// avant acceptation, écran dispatch-offer).
+export function formatDeliveryTimeEstimate(
+  pickupScheduledAt: string | null,
+  createdAt: string,
+  collectedAt: string | null,
+  durationS: number
+): string {
+  const real = formatEstimatedDelivery(collectedAt, durationS);
+  if (real !== null) return real.replace('vers ', '');
+
+  const collectionAt = pickupScheduledAt ?? createdAt;
+  const estimatedAtMs = new Date(collectionAt).getTime() + durationS * 1_000;
+  if (Number.isNaN(estimatedAtMs)) return `+ ${formatDurationMin(durationS)}`;
+
+  const time = new Date(estimatedAtMs).toLocaleTimeString('fr-FR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Europe/Paris'
+  });
+  return time.replace(':', 'h');
+}
+
 // Le domaine Order n'a pas de deadline de collecte — seulement createdAt.
 // On affiche donc une ancienneté relative plutôt qu'un délai inventé.
 export function formatRelativeMinutes(isoDate: string): string {

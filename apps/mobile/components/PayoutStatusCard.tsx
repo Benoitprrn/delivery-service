@@ -10,22 +10,23 @@ const TONE_STYLES: Record<PayoutTone, { box: string; title: string }> = {
   neutral: { box: 'border-border bg-surface', title: 'text-stone-800' }
 };
 
-function ToneIcon({ tone }: { tone: PayoutTone }) {
-  if (tone === 'success') return <CircleCheck size={24} color={EMERALD_600} />;
-  if (tone === 'danger') return <CircleAlert size={24} color="#B91C1C" />;
-  if (tone === 'warning') return <CircleAlert size={24} color="#B45309" />;
-  return <CreditCard size={24} color="#78716C" />;
+function ToneIcon({ tone, size }: { tone: PayoutTone; size: number }) {
+  if (tone === 'success') return <CircleCheck size={size} color={EMERALD_600} />;
+  if (tone === 'danger') return <CircleAlert size={size} color="#B91C1C" />;
+  if (tone === 'warning') return <CircleAlert size={size} color="#B45309" />;
+  return <CreditCard size={size} color="#78716C" />;
 }
 
-// Carte d'état des paiements : libellés sans jargon (voir lib/payout-status.ts), même rendu dans le hub et le Wallet.
+// Carte d'état des paiements : libellés sans jargon (voir lib/payout-status.ts), même rendu dans le hub et les paiements.
 export function PayoutStatusCard({ ui }: { ui: PayoutUi }) {
   const style = TONE_STYLES[ui.tone];
+  const hasDescription = ui.description !== '';
   return (
-    <View className={`flex-row items-start gap-3 rounded-2xl border p-4 ${style.box}`}>
-      <ToneIcon tone={ui.tone} />
-      <View className="flex-1 gap-1">
-        <Text className={`font-sans-bold text-h3 ${style.title}`}>{ui.title}</Text>
-        <Text className="font-sans text-body-lg text-stone-700">{ui.description}</Text>
+    <View className={`flex-row gap-2 rounded-xl border p-3 ${style.box} ${hasDescription ? 'items-start' : 'items-center'}`}>
+      <ToneIcon tone={ui.tone} size={20} />
+      <View className="flex-1 gap-0.5">
+        <Text className={`font-sans-semibold text-body-lg ${style.title}`}>{ui.title}</Text>
+        {hasDescription && <Text className="font-sans text-body text-stone-700">{ui.description}</Text>}
       </View>
     </View>
   );

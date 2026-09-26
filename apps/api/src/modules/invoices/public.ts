@@ -2,13 +2,14 @@ import type { Pool } from 'pg'
 import { IssueOrderInvoicesUseCase } from './application/issue-order-invoices.js'
 import { CreateCreditNoteUseCase } from './application/create-credit-note.js'
 import { GetOrderDocumentsUseCase } from './application/get-order-documents.js'
+import { GetDriverInvoicesUseCase } from './application/get-driver-invoices.js'
 import { GetInvoiceDocumentFileUseCase } from './application/get-invoice-document-file.js'
 import { PostgresInvoiceRepository, InvoiceIssuanceDeferredError } from './infrastructure/postgres-invoice-repository.js'
 import { PostgresInvoiceDocumentFileRepository } from './infrastructure/postgres-invoice-document-file-repository.js'
 import { PostgresEInvoiceDirectoryCacheRepository } from './infrastructure/postgres-einvoice-directory-cache-repository.js'
 export { registerInvoiceHttpRoutes } from './transport/http/routes.js'
 export { PostgresInvoiceRepository, InvoiceIssuanceDeferredError }
-export { CreateCreditNoteUseCase, GetOrderDocumentsUseCase, GetInvoiceDocumentFileUseCase }
+export { CreateCreditNoteUseCase, GetOrderDocumentsUseCase, GetInvoiceDocumentFileUseCase, GetDriverInvoicesUseCase }
 export { PostgresInvoiceDocumentFileRepository } from './infrastructure/postgres-invoice-document-file-repository.js'
 export { SuperPdpOAuthClient } from './infrastructure/superpdp-oauth-client.js'
 export { SuperPdpEInvoiceProvider } from './infrastructure/superpdp-einvoice-provider.js'
@@ -49,22 +50,30 @@ export type { MandateTemplateRepository, MandateTemplate } from './ports/mandate
 export type { GetOrderDocumentsCommand } from './application/get-order-documents.js'
 export type { GetInvoiceDocumentFileCommand, InvoiceDocumentFileRepository } from './ports/invoice-document-file-repository.js'
 export type { EInvoiceDocumentStorage } from './ports/einvoice-document-storage.js'
-export type { InvoiceRepository, InvoiceDocument, CreditNoteDocument, OrderDocuments } from './ports/invoice-repository.js'
+export type { InvoiceRepository, InvoiceDocument, CreditNoteDocument, OrderDocuments, DriverInvoiceListItem } from './ports/invoice-repository.js'
 export function createInvoicesModule(pool: Pool, electronicAddressScheme: string) {
   const repository = new PostgresInvoiceRepository(pool, electronicAddressScheme)
   const issue = new IssueOrderInvoicesUseCase(repository)
   const createCreditNote = new CreateCreditNoteUseCase(repository)
   const getOrderDocuments = new GetOrderDocumentsUseCase(repository)
+  const getDriverInvoices = new GetDriverInvoicesUseCase(repository)
   const documentFiles = new PostgresInvoiceDocumentFileRepository(pool)
   const directoryCache = new PostgresEInvoiceDirectoryCacheRepository(pool)
   return {
     issueForCompletedOrder: issue.execute.bind(issue),
     createCreditNote: createCreditNote.execute.bind(createCreditNote),
     getOrderDocuments: getOrderDocuments.execute.bind(getOrderDocuments),
+    getDriverInvoices: getDriverInvoices.execute.bind(getDriverInvoices),
     documentFiles,
     getElectronicInvoicingStatus: async (merchantId: string) => {
       const entry = await directoryCache.read(merchantId)
       return entry === null ? 'unknown' as const : entry.resolution.status === 'ready' ? 'available' as const : 'unavailable' as const
+    },
+    // Garde D-MD (module orders) : mandat SIGNÉ uniquement, jamais la vérification Super PDP —
+    // distincte de `DriverEInvoiceReadiness.hasVerifiedMandate`, réservée à la transmission.
+    hasSignedMandate: async (driverId: string) => {
+      const result = await pool.query('select 1 from driver_einvoice_mandates where driver_id = $1 and revoked_at is null limit 1', [driverId])
+      return result.rowCount === 1
     }
   }
 }

@@ -156,12 +156,15 @@ export function createSocketEventEmitter(
   notifications: DispatchOfferPushSender = { sendDispatchOfferPush: async () => undefined }
 ): OutboxEmit {
   return async ({ eventType, payload }) => {
-    if (eventType === 'order.created.v1') {
+    if (eventType === 'order.created.v1' || eventType === 'order.unassigned.v1') {
       const orderId = payload.orderId
       if (typeof orderId !== 'string') return
       // The sequential VROOM dispatcher replaces the marketplace broadcast:
       // notifying one driver at a time happens on dispatch.offer_created.v1,
-      // not here.
+      // not here. A driver-cancelled order (order.unassigned.v1) re-enters the
+      // exact same search — the cancelling driver is permanently excluded via
+      // the 'driver_cancelled' dispatch_attempts entry written in the same
+      // transaction as the ASSIGNED -> AVAILABLE transition.
       await dispatch.startDispatch(orderId)
       return
     }

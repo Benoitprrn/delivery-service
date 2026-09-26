@@ -61,6 +61,12 @@ const driverEligible = { isEligible: async () => true }
 // D-D même principe pour la garde « invoice readiness » (Étape 4) : ces commandes n'ont pas de
 // données légales livreur en base, la garde réelle est testée séparément (test/invoices).
 const driverInvoiceReady = { isReady: async () => true }
+// D-D même principe pour la garde « company profile » (D-CP) : ces commandes n'ont pas de dossier
+// « Mon entreprise » livreur en base, la garde réelle est testée séparément (test/orders/settlement-guards.test.ts).
+const driverCompanyProfileReady = { isReady: async () => true }
+// D-D même principe pour la garde « mandat » (D-MD) : ces commandes n'ont pas de mandat de
+// facturation livreur signé en base, la garde réelle est testée séparément (test/orders/settlement-guards.test.ts).
+const driverMandateReady = { isReady: async () => true }
 
 describe('orders HTTP endpoints', () => {
   beforeAll(async () => {
@@ -86,7 +92,7 @@ describe('orders HTTP endpoints', () => {
   })
 
   beforeEach(async () => {
-    app = await buildApp({ connectProvider: activeCardPayments, merchantSettlementReadiness: settlementReady, driverEligibility: driverEligible, driverInvoiceReadiness: driverInvoiceReady })
+    app = await buildApp({ connectProvider: activeCardPayments, merchantSettlementReadiness: settlementReady, driverEligibility: driverEligible, driverInvoiceReadiness: driverInvoiceReady, driverCompanyProfileReadiness: driverCompanyProfileReady, driverMandateReadiness: driverMandateReady })
   })
 
   afterEach(async () => {
@@ -209,7 +215,7 @@ describe('orders HTTP endpoints', () => {
     it('refuses a COD order with 409 CardPaymentsNotReady while card_payments is not active, but not a non-COD order', async () => {
       const pending = new FakeConnectPaymentsProvider()
       pending.accountStatus = { ...pending.accountStatus, cardPayments: 'pending' }
-      const guarded = await buildApp({ connectProvider: pending, merchantSettlementReadiness: settlementReady, driverEligibility: driverEligible, driverInvoiceReadiness: driverInvoiceReady })
+      const guarded = await buildApp({ connectProvider: pending, merchantSettlementReadiness: settlementReady, driverEligibility: driverEligible, driverInvoiceReadiness: driverInvoiceReady, driverCompanyProfileReadiness: driverCompanyProfileReady, driverMandateReadiness: driverMandateReady })
       try {
         const countOrders = async (): Promise<number> => Number((await pool.query<{ count: string }>(
           'select count(*) from orders where merchant_id = $1', [merchantId]
@@ -228,7 +234,7 @@ describe('orders HTTP endpoints', () => {
     })
 
     it('refuses a COD order when the merchant has no Stripe Account or Stripe is unavailable (fail closed)', async () => {
-      const unavailable = await buildApp({ merchantSettlementReadiness: settlementReady, driverEligibility: driverEligible, driverInvoiceReadiness: driverInvoiceReady })
+      const unavailable = await buildApp({ merchantSettlementReadiness: settlementReady, driverEligibility: driverEligible, driverInvoiceReadiness: driverInvoiceReady, driverCompanyProfileReadiness: driverCompanyProfileReady, driverMandateReadiness: driverMandateReady })
       try {
         const response = await postOrder(unavailable, { amountCents: 5000 })
         expect(response.statusCode).toBe(409)
@@ -439,6 +445,43 @@ describe('orders HTTP endpoints', () => {
         })
       })
     ]))
+  })
+
+  it('unassigns an ASSIGNED order back to AVAILABLE and records a permanent driver_cancelled dispatch attempt', async () => {
+    const order = await createValidOrder()
+    const assigned = await orders.assignOrder({
+      orderId: order.id as string, driverId, expectedVersion: order.version as number, actor: { type: 'driver', id: driverId }
+    })
+
+    const response = await app.inject({
+      method: 'POST', url: `/api/v1/orders/${order.id}/unassign`, headers: { authorization: `Bearer ${driverAccessToken}` },
+      payload: { expectedVersion: assigned.version }
+    })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({ status: 'AVAILABLE', driverId: null, version: assigned.version + 1 })
+
+    const persisted = await pool.query<{ metadata: { dispatch_attempts: Array<{ driverId: string; reason: string }> } }>(
+      'select metadata from orders where id = $1', [order.id]
+    )
+    expect(persisted.rows[0]?.metadata.dispatch_attempts).toContainEqual(
+      expect.objectContaining({ driverId, reason: 'driver_cancelled' })
+    )
+    await expect(pool.query(
+      "select 1 from outbox_event where aggregate_id = $1 and event_type = 'order.unassigned.v1'", [order.id]
+    )).resolves.toMatchObject({ rowCount: 1 })
+  })
+
+  it('forbids a non-driver from unassigning an order', async () => {
+    const order = await createValidOrder()
+    const assigned = await orders.assignOrder({
+      orderId: order.id as string, driverId, expectedVersion: order.version as number, actor: { type: 'driver', id: driverId }
+    })
+
+    const response = await app.inject({
+      method: 'POST', url: `/api/v1/orders/${order.id}/unassign`, headers: { authorization: `Bearer ${merchantAccessToken}` },
+      payload: { expectedVersion: assigned.version }
+    })
+    expect(response.statusCode).toBe(403)
   })
 
   it('returns 404 for an unknown route', async () => {

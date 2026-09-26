@@ -33,6 +33,14 @@ export function buildOrderAssignedEvent(order: Order): DomainEvent {
   })
 }
 
+export function buildOrderUnassignedEvent(order: Order): DomainEvent {
+  return event(order, 'order.unassigned.v1', {
+    orderId: order.id,
+    zoneId: order.zoneId,
+    merchantId: order.merchantId
+  })
+}
+
 export function buildOrderCollectedEvent(order: Order): DomainEvent {
   return event(order, 'order.collected.v1', {
     orderId: order.id,

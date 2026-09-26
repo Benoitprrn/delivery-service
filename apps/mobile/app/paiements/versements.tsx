@@ -1,9 +1,10 @@
 import { ConnectPayments, ConnectPayouts } from '@stripe/stripe-react-native';
 import { useRouter } from 'expo-router';
 import { ChevronLeft } from 'lucide-react-native';
-import { useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { LoadingState } from '../../components/list-state';
 import { StripeConnectShell } from '../../components/StripeConnectShell';
 import { openStripeDashboard } from '../../lib/open-external';
 
@@ -14,6 +15,16 @@ export default function PayoutHistoryScreen() {
   const router = useRouter();
   const [tab, setTab] = useState<Tab>('payouts');
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  // Filet de sécurité : le composant embarqué Stripe (ESSAI, non garanti par le SDK) ne
+  // signale pas toujours sa fin de chargement (`onPageDidLoad`). Sans ça, la bulle de
+  // chargement resterait affichée indéfiniment même une fois le contenu réellement visible.
+  useEffect(() => {
+    if (!loading) return;
+    const timeout = setTimeout(() => setLoading(false), 6_000);
+    return () => clearTimeout(timeout);
+  }, [loading, tab]);
 
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['top']}>
@@ -21,13 +32,13 @@ export default function PayoutHistoryScreen() {
         <Pressable onPress={() => router.back()} className="h-touch-comfortable w-touch-comfortable items-center justify-center">
           <ChevronLeft size={24} color="#44403C" />
         </Pressable>
-        <Text className="font-sans-bold text-h3 text-stone-800">Versements et transactions</Text>
+        <Text className="font-sans-bold text-h3 text-stone-800">Historique des virements</Text>
       </View>
       <View className="flex-row gap-2 px-page-mobile pb-3">
         {(['payouts', 'payments'] as const).map((value) => (
           <Pressable
             key={value}
-            onPress={() => { setTab(value); setLoadError(null); }}
+            onPress={() => { setTab(value); setLoadError(null); setLoading(true); }}
             className={`h-touch-comfortable flex-1 items-center justify-center rounded-lg border ${tab === value ? 'border-primary-600 bg-primary-100' : 'border-border bg-surface'}`}
           >
             <Text className={`font-sans-semibold text-body-lg ${tab === value ? 'text-primary-700' : 'text-stone-600'}`}>{value === 'payouts' ? 'Virements' : 'Transactions'}</Text>
@@ -38,8 +49,9 @@ export default function PayoutHistoryScreen() {
         <StripeConnectShell purpose="wallet">
           <View className="flex-1">
             {tab === 'payouts'
-              ? <ConnectPayouts style={{ flex: 1 }} onLoadError={(event) => setLoadError(event.error.message ?? event.error.type)} />
-              : <ConnectPayments style={{ flex: 1 }} onLoadError={(event) => setLoadError(event.error.message ?? event.error.type)} />}
+              ? <ConnectPayouts style={{ flex: 1 }} onPageDidLoad={() => setLoading(false)} onLoadError={(event) => setLoadError(event.error.message ?? event.error.type)} />
+              : <ConnectPayments style={{ flex: 1 }} onPageDidLoad={() => setLoading(false)} onLoadError={(event) => setLoadError(event.error.message ?? event.error.type)} />}
+            {loading && <View style={StyleSheet.absoluteFill} className="bg-background"><LoadingState /></View>}
           </View>
         </StripeConnectShell>
       ) : (

@@ -49,6 +49,55 @@ export type DriverOrderDocuments = {
   creditNotes: Array<{ id: string; number: string; originalInvoiceNumber: string; issuedAt: string; totalHtCents: number; totalVatCents: number; totalTtcCents: number; transmissionStatus: DocumentTransmissionStatus; submissionStatus: DocumentSubmissionStatus; lastError: string | null; facturXAvailable: boolean }>;
 };
 
+// Compte → Mes factures (2026-09-25) : une ligne par facture livreur, tous ordres confondus.
+export type DriverInvoiceListItem = { id: string; number: string; orderId: string; orderPublicReference: string; merchantName: string; issuedAt: string; totalHtCents: number; totalVatCents: number; totalTtcCents: number; transmissionStatus: DocumentTransmissionStatus; submissionStatus: DocumentSubmissionStatus; lastError: string | null; facturXAvailable: boolean };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+// Inscription livreur : seul appel public de ce fichier (aucune session au
+// moment de l'appel) — bypass request() pour distinguer 201 (compte créé) de
+// 202 (issue Auth ambiguë, réservation conservée côté serveur pour
+// réconciliation manuelle — voir provision-driver.ts) sans les traiter
+// comme un échec puisque fetch() considère les deux comme `ok`.
+export type DriverSignupInput = { firstName: string; lastName: string; email: string; phone: string; password: string; termsAccepted: true };
+export type DriverSignupResult = { status: 'created'; driverId: string } | { status: 'pending' };
+
+function driverSignupErrorMessage(code: string | undefined, status: number): string {
+  if (status === 429) return 'Trop de tentatives, réessayez dans quelques instants.';
+  switch (code) {
+    case 'ValidationError':
+      return 'Vérifiez les informations saisies.';
+    case 'AccountAlreadyExistsError':
+      return 'Un compte existe déjà avec ces informations. Connectez-vous ou utilisez d’autres coordonnées.';
+    case 'DriverProvisioningError':
+      return 'Le service d’authentification est momentanément indisponible.';
+    default:
+      return status >= 500 ? 'La création du compte a échoué, réessayez plus tard.' : 'La création du compte a échoué.';
+  }
+}
+
+async function driverSignup(input: DriverSignupInput): Promise<DriverSignupResult> {
+  const response = await fetch(`${API_URL}/api/v1/auth/driver-signup`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input)
+  });
+  const body: unknown = await response.json().catch(() => null);
+
+  if (response.status === 201) {
+    const driverId = isRecord(body) && typeof body.driverId === 'string' ? body.driverId : undefined;
+    if (driverId === undefined) throw new ApiError(500, 'Réponse inattendue du serveur');
+    return { status: 'created', driverId };
+  }
+  if (response.status === 202) {
+    return { status: 'pending' };
+  }
+  const code = isRecord(body) && typeof body.error === 'string' ? body.error : undefined;
+  throw new ApiError(response.status, driverSignupErrorMessage(code, response.status), undefined, code);
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
@@ -137,12 +186,14 @@ export type CompletionState = {
 };
 
 export const api = {
+  driverSignup,
   getMyDriverProfile: () => request<DriverProfile>('/api/v1/drivers/me'),
   getAvailableOrders: (zoneId: string) =>
     request<AvailableOrder[]>(`/api/v1/orders/available?zoneId=${encodeURIComponent(zoneId)}`),
   getMyOrders: () => request<{ orders: DriverOrder[] }>('/api/v1/orders/driver'),
   getMyOrderHistory: () => request<{ orders: DriverHistoryOrder[] }>('/api/v1/orders/driver/history'),
   getOrderDocuments: (orderId: string) => request<DriverOrderDocuments>(`/api/v1/orders/${orderId}/documents`),
+  getMyInvoices: () => request<{ invoices: DriverInvoiceListItem[] }>('/api/v1/drivers/me/invoices'),
   collectOrder: (orderId: string, expectedVersion: number) =>
     request<Order>(`/api/v1/orders/${orderId}/collect`, {
       method: 'POST',
@@ -178,6 +229,11 @@ export const api = {
     }),
   returnOrder: (orderId: string, expectedVersion: number) =>
     request<Order>(`/api/v1/orders/${orderId}/return`, {
+      method: 'POST',
+      body: JSON.stringify({ expectedVersion })
+    }),
+  unassignOrder: (orderId: string, expectedVersion: number) =>
+    request<Order>(`/api/v1/orders/${orderId}/unassign`, {
       method: 'POST',
       body: JSON.stringify({ expectedVersion })
     }),

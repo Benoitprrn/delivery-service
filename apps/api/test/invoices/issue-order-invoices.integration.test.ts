@@ -136,6 +136,35 @@ describe.skipIf(!isolated)('invoice engine (isolated DB only)', () => {
     expect(driverView?.invoices.some((invoice) => invoice.issuerKind === 'locadely')).toBe(false)
   })
 
+  it('listForDriver: lists a driver’s own invoices across orders, most recent first, never another driver’s or Locadely’s', async () => {
+    const firstOrderId = await createCompletedOrder(400, 80)
+    await repository.issueForCompletedOrder(firstOrderId)
+    const secondOrderId = await createCompletedOrder(600, 120)
+    await repository.issueForCompletedOrder(secondOrderId)
+    const otherOrderId = await createCompletedOrder(300, 60, otherDriverId)
+    await pool.query("update drivers set first_name='Alice', last_name='Autre' where id=$1::uuid", [otherDriverId])
+    await pool.query(
+      `insert into driver_legal_information (driver_id, professional_name, siret, siren, legal_address_line1, legal_address_postal_code, legal_address_city, vat_regime)
+       values ($1::uuid,'Alice Autre Livraisons','98765432100019','987654321','9 rue Autre','01000','Bourg-en-Bresse','franchise_en_base') on conflict (driver_id) do nothing`,
+      [otherDriverId]
+    )
+    await repository.issueForCompletedOrder(otherOrderId)
+
+    const mine = await repository.listForDriver(driverId)
+    expect(mine).toHaveLength(2)
+    expect(mine.every((invoice) => invoice.issuerKind === 'driver')).toBe(true)
+    expect(mine[0]?.orderId).toBe(secondOrderId)
+    expect(mine[1]?.orderId).toBe(firstOrderId)
+    expect(mine[0]).toMatchObject({ totalHtCents: 600, merchantName: 'Resto Test' })
+    expect(mine.some((invoice) => invoice.orderId === otherOrderId)).toBe(false)
+
+    const theirs = await repository.listForDriver(otherDriverId)
+    expect(theirs).toHaveLength(1)
+    expect(theirs[0]?.orderId).toBe(otherOrderId)
+
+    await pool.query('delete from driver_legal_information where driver_id = $1::uuid', [otherDriverId])
+  })
+
   it('accepts a partial credit note within the original line and rejects a cumulative overshoot', async () => {
     const orderId = await createCompletedOrder(1000, 200)
     await repository.issueForCompletedOrder(orderId)

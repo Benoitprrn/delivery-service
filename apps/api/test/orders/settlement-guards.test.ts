@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { AssignOrderUseCase } from '../../src/modules/orders/application/assign-order.js'
 import { CreateOrderUseCase } from '../../src/modules/orders/application/create-order.js'
 import { ListAvailableOrdersUseCase } from '../../src/modules/orders/application/list-available-orders.js'
-import { DriverPayoutAccountNotReadyError, MerchantOnboardingIncompleteError, MerchantPaymentSetupIncompleteError } from '../../src/modules/orders/domain/errors.js'
+import { DriverPayoutAccountNotReadyError, DriverCompanyProfileNotReadyError, DriverMandateNotReadyError, MerchantOnboardingIncompleteError, MerchantPaymentSetupIncompleteError } from '../../src/modules/orders/domain/errors.js'
 import { createMerchantSettlementReadiness } from '../../src/modules/orders/infrastructure/merchant-settlement-readiness.js'
 import type { DriverCapacityWriter } from '../../src/modules/orders/ports/driver-capacity-writer.js'
 import type { MerchantSettlementReadinessReader } from '../../src/modules/orders/ports/merchant-settlement-readiness.js'
@@ -115,6 +115,100 @@ describe('D-F — a driver without a ready payout account gets no delivery', () 
     findAvailableInZone.mockClear()
     await expect(new ListAvailableOrdersUseCase(repo, { isAvailable: async () => true }, { isEligible: async () => false }).execute({ driverId: 'd', zoneId: 'z' })).resolves.toEqual([])
     await expect(new ListAvailableOrdersUseCase(repo, { isAvailable: async () => false }, { isEligible: async () => true }).execute({ driverId: 'd', zoneId: 'z' })).resolves.toEqual([])
+    expect(findAvailableInZone).not.toHaveBeenCalled()
+  })
+})
+
+describe('D-CP — a driver with an incomplete "Mon entreprise" dossier gets no delivery', () => {
+  const capacity = () => ({ increment: vi.fn().mockResolvedValue(undefined), decrement: vi.fn() }) as unknown as DriverCapacityWriter & { increment: ReturnType<typeof vi.fn> }
+
+  it('assigns a driver whose company profile is complete and increments its capacity', async () => {
+    const assign = vi.fn().mockResolvedValue({ id: 'order' })
+    const cap = capacity()
+    const useCase = new AssignOrderUseCase({ assign } as unknown as OrderRepository, cap, { isEligible: async () => true }, { isReady: async () => true }, { isReady: async () => true })
+    await expect(useCase.execute({ orderId: 'o', driverId: 'd', expectedVersion: 1, actor: { type: 'driver', id: 'd' } })).resolves.toEqual({ id: 'order' })
+    expect(assign).toHaveBeenCalledTimes(1)
+    expect(cap.increment).toHaveBeenCalledWith('d')
+  })
+
+  it('refuses a driver with an incomplete company profile with DriverCompanyProfileNotReady, distinct from the payout error, and touches nothing', async () => {
+    const assign = vi.fn()
+    const cap = capacity()
+    const useCase = new AssignOrderUseCase({ assign } as unknown as OrderRepository, cap, { isEligible: async () => true }, { isReady: async () => true }, { isReady: async () => false })
+    const error = await useCase.execute({ orderId: 'o', driverId: 'd', expectedVersion: 1, actor: { type: 'driver', id: 'd' } }).catch(e => e)
+    expect(error).toBeInstanceOf(DriverCompanyProfileNotReadyError)
+    expect(error).not.toBeInstanceOf(DriverPayoutAccountNotReadyError)
+    expect(assign).not.toHaveBeenCalled()
+    expect(cap.increment).not.toHaveBeenCalled()
+  })
+
+  it('checks payout eligibility (D-F) before the company profile: an ineligible driver still gets DriverPayoutAccountNotReady even if the company profile is also incomplete', async () => {
+    const assign = vi.fn()
+    const useCase = new AssignOrderUseCase({ assign } as unknown as OrderRepository, capacity(), { isEligible: async () => false }, { isReady: async () => true }, { isReady: async () => false })
+    await expect(useCase.execute({ orderId: 'o', driverId: 'd', expectedVersion: 1, actor: { type: 'driver', id: 'd' } })).rejects.toBeInstanceOf(DriverPayoutAccountNotReadyError)
+  })
+
+  it('fails closed when the company profile readiness lookup fails', async () => {
+    const assign = vi.fn()
+    const useCase = new AssignOrderUseCase({ assign } as unknown as OrderRepository, capacity(), { isEligible: async () => true }, { isReady: async () => true }, { isReady: async () => { throw new Error('db down') } })
+    await expect(useCase.execute({ orderId: 'o', driverId: 'd', expectedVersion: 1, actor: { type: 'driver', id: 'd' } })).rejects.toThrow('db down')
+    expect(assign).not.toHaveBeenCalled()
+  })
+
+  it('lists available orders only for a driver who is available, eligible, AND has a complete company profile', async () => {
+    const findAvailableInZone = vi.fn().mockResolvedValue([{ id: 'o1' }])
+    const repo = { findAvailableInZone } as unknown as OrderRepository
+    await expect(new ListAvailableOrdersUseCase(repo, { isAvailable: async () => true }, { isEligible: async () => true }, { isReady: async () => true }, { isReady: async () => true }).execute({ driverId: 'd', zoneId: 'z' })).resolves.toEqual([{ id: 'o1' }])
+    findAvailableInZone.mockClear()
+    await expect(new ListAvailableOrdersUseCase(repo, { isAvailable: async () => true }, { isEligible: async () => true }, { isReady: async () => true }, { isReady: async () => false }).execute({ driverId: 'd', zoneId: 'z' })).resolves.toEqual([])
+    expect(findAvailableInZone).not.toHaveBeenCalled()
+  })
+})
+
+describe('D-MD — a driver who has not signed their invoice mandate gets no delivery', () => {
+  const capacity = () => ({ increment: vi.fn().mockResolvedValue(undefined), decrement: vi.fn() }) as unknown as DriverCapacityWriter & { increment: ReturnType<typeof vi.fn> }
+
+  it('assigns a driver with a signed mandate and increments its capacity', async () => {
+    const assign = vi.fn().mockResolvedValue({ id: 'order' })
+    const cap = capacity()
+    const useCase = new AssignOrderUseCase({ assign } as unknown as OrderRepository, cap, { isEligible: async () => true }, { isReady: async () => true }, { isReady: async () => true }, { isReady: async () => true })
+    await expect(useCase.execute({ orderId: 'o', driverId: 'd', expectedVersion: 1, actor: { type: 'driver', id: 'd' } })).resolves.toEqual({ id: 'order' })
+    expect(assign).toHaveBeenCalledTimes(1)
+    expect(cap.increment).toHaveBeenCalledWith('d')
+  })
+
+  it('refuses a driver without a signed mandate with DriverMandateNotReady, distinct from the other guards, and touches nothing', async () => {
+    const assign = vi.fn()
+    const cap = capacity()
+    const useCase = new AssignOrderUseCase({ assign } as unknown as OrderRepository, cap, { isEligible: async () => true }, { isReady: async () => true }, { isReady: async () => true }, { isReady: async () => false })
+    const error = await useCase.execute({ orderId: 'o', driverId: 'd', expectedVersion: 1, actor: { type: 'driver', id: 'd' } }).catch(e => e)
+    expect(error).toBeInstanceOf(DriverMandateNotReadyError)
+    expect(error).not.toBeInstanceOf(DriverPayoutAccountNotReadyError)
+    expect(error).not.toBeInstanceOf(DriverCompanyProfileNotReadyError)
+    expect(assign).not.toHaveBeenCalled()
+    expect(cap.increment).not.toHaveBeenCalled()
+  })
+
+  it('checks payout (D-F) and company profile (D-CP) before the mandate: a driver failing an earlier guard never sees DriverMandateNotReady', async () => {
+    const assign = vi.fn()
+    const useCase = new AssignOrderUseCase({ assign } as unknown as OrderRepository, capacity(), { isEligible: async () => true }, { isReady: async () => true }, { isReady: async () => false }, { isReady: async () => false })
+    const error = await useCase.execute({ orderId: 'o', driverId: 'd', expectedVersion: 1, actor: { type: 'driver', id: 'd' } }).catch(e => e)
+    expect(error).toBeInstanceOf(DriverCompanyProfileNotReadyError)
+  })
+
+  it('fails closed when the mandate readiness lookup fails', async () => {
+    const assign = vi.fn()
+    const useCase = new AssignOrderUseCase({ assign } as unknown as OrderRepository, capacity(), { isEligible: async () => true }, { isReady: async () => true }, { isReady: async () => true }, { isReady: async () => { throw new Error('db down') } })
+    await expect(useCase.execute({ orderId: 'o', driverId: 'd', expectedVersion: 1, actor: { type: 'driver', id: 'd' } })).rejects.toThrow('db down')
+    expect(assign).not.toHaveBeenCalled()
+  })
+
+  it('lists available orders only for a driver who is available, eligible, with a complete company profile, AND a signed mandate', async () => {
+    const findAvailableInZone = vi.fn().mockResolvedValue([{ id: 'o1' }])
+    const repo = { findAvailableInZone } as unknown as OrderRepository
+    await expect(new ListAvailableOrdersUseCase(repo, { isAvailable: async () => true }, { isEligible: async () => true }, { isReady: async () => true }, { isReady: async () => true }, { isReady: async () => true }).execute({ driverId: 'd', zoneId: 'z' })).resolves.toEqual([{ id: 'o1' }])
+    findAvailableInZone.mockClear()
+    await expect(new ListAvailableOrdersUseCase(repo, { isAvailable: async () => true }, { isEligible: async () => true }, { isReady: async () => true }, { isReady: async () => true }, { isReady: async () => false }).execute({ driverId: 'd', zoneId: 'z' })).resolves.toEqual([])
     expect(findAvailableInZone).not.toHaveBeenCalled()
   })
 })

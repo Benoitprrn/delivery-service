@@ -104,3 +104,17 @@ export class DriverInvoiceInformationNotReadyError extends Error {
     this.name = 'DriverInvoiceInformationNotReady'
   }
 }
+
+export class DriverCompanyProfileNotReadyError extends Error {
+  public constructor(message = 'The driver company profile must be complete before taking deliveries') {
+    super(message)
+    this.name = 'DriverCompanyProfileNotReady'
+  }
+}
+
+export class DriverMandateNotReadyError extends Error {
+  public constructor(message = 'The driver invoice mandate must be signed before taking deliveries') {
+    super(message)
+    this.name = 'DriverMandateNotReady'
+  }
+}

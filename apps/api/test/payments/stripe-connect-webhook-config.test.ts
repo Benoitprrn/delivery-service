@@ -12,6 +12,7 @@ const base = {
   OPENCAGE_API_KEY: 'key',
   SUPABASE_URL: 'http://supabase',
   SUPABASE_SECRET_KEY: 'secret',
+  DRIVER_SIGNUP_ZONE_ID: '11111111-1111-1111-1111-111111111111',
   VALKEY_URL: 'redis://valkey'
 }
 

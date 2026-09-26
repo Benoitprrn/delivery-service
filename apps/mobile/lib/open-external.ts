@@ -28,3 +28,8 @@ export function openStripeDashboard(): Promise<boolean> {
 export function openMandatePdf(): Promise<boolean> {
   return open(async () => (await api.getMandatePdfUrl()).url, 'Impossible d’ouvrir votre mandat signé.');
 }
+
+// Facture livreur (Compte → Mes factures) : même URL signée courte que sur l'écran d'une commande.
+export function openInvoiceDocument(orderId: string, documentId: string): Promise<boolean> {
+  return open(async () => (await api.getInvoiceDocumentFacturXUrl(orderId, documentId, 'invoice')).url, 'Impossible d’ouvrir la facture.');
+}

@@ -37,11 +37,24 @@ function formatTime(timestamp: number): string {
  * livreur. La valeur `now` est capturée une seule fois par rendu : toutes les
  * commandes ASAP restent donc cohérentes entre elles pour le tri et l'heure.
  */
+// Un nœud sans son connecteur/ancre : calculés après coup, une fois la séquence chronologique
+// finale connue (voir buildTimelineNodes).
+type PendingNode = Omit<TimelineNode, 'connector' | 'isAnchor'>;
+
+function getDeliveryTime(order: DriverOrder, now: number): number {
+  return getPickupTime(order, now) + order.durationS * 1_000;
+}
+
 function buildTimelineNodes(orders: DriverOrder[], now: number): TimelineNode[] {
   const sortedOrders = [...orders].sort((first, second) => getPickupTime(first, now) - getPickupTime(second, now));
+  // Parmi les commandes déjà en main (COLLECTED/RETURNING), « en cours » doit être celle dont
+  // la livraison (ou le retour) arrive le plus tôt — pas juste la première trouvée dans l'ordre
+  // de collecte, qui ne reflète pas forcément l'urgence de livraison une fois le colis en main.
+  const carriedOrders = sortedOrders.filter((order) => order.status === 'COLLECTED' || order.status === 'RETURNING');
   const currentOrderId =
-    sortedOrders.find((order) => order.status === 'COLLECTED' || order.status === 'RETURNING')?.id ??
-    sortedOrders.find((order) => order.status === 'ASSIGNED')?.id;
+    carriedOrders.length > 0
+      ? carriedOrders.reduce((soonest, order) => (getDeliveryTime(order, now) < getDeliveryTime(soonest, now) ? order : soonest)).id
+      : sortedOrders.find((order) => order.status === 'ASSIGNED')?.id;
   const fallbackOrderId = currentOrderId === undefined
     ? [...sortedOrders].sort(
       (first, second) =>
@@ -49,24 +62,21 @@ function buildTimelineNodes(orders: DriverOrder[], now: number): TimelineNode[] 
     )[0]?.id
     : undefined;
 
-  const nodes: TimelineNode[] = [];
-  for (const [index, order] of sortedOrders.entries()) {
+  const pending: PendingNode[] = [];
+  for (const order of sortedOrders) {
     const pickupAt = getPickupTime(order, now);
     const deliveryAt = pickupAt + order.durationS * 1_000;
-    const hasNextOrder = index < sortedOrders.length - 1;
     const isCurrent = order.id === currentOrderId;
 
     if (order.status === 'CANCELLED') {
-      nodes.push({
+      pending.push({
         id: `${order.id}:cancelled`,
         order,
         kind: 'cancelled',
         state: 'cancelled',
         at: pickupAt,
         title: 'Commande annulée',
-        address: order.pickupAddress,
-        connector: hasNextOrder ? 'dotted' : 'none',
-        isAnchor: order.id === fallbackOrderId
+        address: order.pickupAddress
       });
       continue;
     }
@@ -78,32 +88,28 @@ function buildTimelineNodes(orders: DriverOrder[], now: number): TimelineNode[] 
           ? 'current'
           : 'upcoming';
 
-    nodes.push({
+    pending.push({
       id: `${order.id}:pickup`,
       order,
       kind: 'pickup',
       state: pickupState,
       at: pickupAt,
       title: order.merchantName,
-      address: order.pickupAddress,
-      connector: 'solid',
-      isAnchor: pickupState === 'current'
+      address: order.pickupAddress
     });
 
     if (order.status === 'RETURNING' || order.status === 'RETURNED') {
-      nodes.push({
+      pending.push({
         id: `${order.id}:return`,
         order,
         kind: 'return',
         state: order.status === 'RETURNED' ? 'done' : isCurrent ? 'current' : 'upcoming',
         at: deliveryAt,
         title: 'Retour au commerce',
-        address: order.pickupAddress,
-        connector: hasNextOrder ? 'dotted' : 'none',
-        isAnchor: order.id === fallbackOrderId || (order.status === 'RETURNING' && isCurrent)
+        address: order.pickupAddress
       });
     } else {
-      nodes.push({
+      pending.push({
         id: `${order.id}:delivery`,
         order,
         kind: 'delivery',
@@ -113,13 +119,33 @@ function buildTimelineNodes(orders: DriverOrder[], now: number): TimelineNode[] 
         state: order.status === 'COMPLETED' ? 'done' : order.status === 'COLLECTED' && isCurrent ? 'current' : 'upcoming',
         at: deliveryAt,
         title: 'Livraison',
-        address: order.deliveryAddress,
-        connector: hasNextOrder ? 'dotted' : 'none',
-        isAnchor: order.id === fallbackOrderId || (order.status === 'COLLECTED' && isCurrent)
+        address: order.deliveryAddress
       });
     }
   }
-  return nodes;
+
+  // Tri chronologique GLOBAL des événements (pas par commande) : deux collectes à la même
+  // heure doivent apparaître l'une après l'autre, suivies des deux livraisons — pas
+  // collecte/livraison/collecte/livraison intercalées. En cas d'égalité stricte, le tri
+  // stable garde l'ordre d'insertion (donc la collecte avant sa propre livraison).
+  pending.sort((first, second) => first.at - second.at);
+
+  return pending.map((node, index) => {
+    const next = pending[index + 1];
+    // Le trait représente le trajet vers l'étape suivante, pas la commande en cours : trait
+    // plein si ce trajet mène vers un CLIENT (livraison, colis en main), pointillé s'il mène
+    // vers un COMMERÇANT (collecte ou retour — simple déplacement, rien à livrer sur ce tronçon).
+    const connector: TimelineNode['connector'] =
+      next === undefined ? 'none' : next.kind === 'delivery' ? 'solid' : 'dotted';
+    const isAnchor =
+      node.kind === 'pickup'
+        ? node.state === 'current'
+        : node.kind === 'cancelled'
+          ? node.order.id === fallbackOrderId
+          : node.order.id === fallbackOrderId ||
+            ((node.order.status === 'RETURNING' || node.order.status === 'COLLECTED') && node.order.id === currentOrderId);
+    return { ...node, connector, isAnchor };
+  });
 }
 
 function NodeIcon({ kind, state }: Pick<TimelineNode, 'kind' | 'state'>) {
@@ -153,7 +179,7 @@ function TimelineItem({
   onCurrentNodeLayout?: ((y: number) => void) | undefined;
 }) {
   const colors = nodeColors(node.kind, node.state);
-  const connectorStyle = node.connector === 'solid' ? { backgroundColor: colors.dot } : { borderColor: '#A8A29E' };
+  const connectorStyle = node.connector === 'solid' ? { backgroundColor: colors.dot } : { borderColor: EMERALD_600 };
   const isCurrent = node.state === 'current';
 
   return (

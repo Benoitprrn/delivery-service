@@ -149,6 +149,75 @@ describe('order lifecycle', () => {
     )
     expect(proof.rows[0]).toMatchObject({ content_type: 'image/jpeg' })
     expect(proof.rows[0]?.expires_at.getTime()).toBeGreaterThan(Date.now())
+
+    // Vie privée du client : une fois la livraison terminée, le nom et le téléphone redeviennent
+    // masqués pour le livreur — plus aucune raison opérationnelle de les garder visibles.
+    const afterCompletion = await orders.findDriverOrderById(available.id);
+    expect(afterCompletion).toMatchObject({ customerName: null, customerPhone: null });
+  })
+
+  it('unassigns an ASSIGNED order back to AVAILABLE, excluding the cancelling driver permanently', async () => {
+    const available = await createOrder()
+    const assigned = await orders.assignOrder({
+      orderId: available.id, driverId, expectedVersion: available.version, actor: { type: 'driver', id: driverId }
+    })
+
+    const unassigned = await orders.unassignOrder({
+      orderId: assigned.id, driverId, expectedVersion: assigned.version, actor: { type: 'driver', id: driverId }
+    })
+    expect(unassigned).toMatchObject({ status: 'AVAILABLE', driverId: null, version: assigned.version + 1 })
+    expect(await transitionsFor(available.id)).toContainEqual({ from_status: 'ASSIGNED', to_status: 'AVAILABLE' })
+    expect(await outboxFor(available.id)).toContainEqual({ event_type: 'order.unassigned.v1', aggregate_version: assigned.version + 1 })
+
+    const metadata = await pool.query<{ dispatch_attempts: Array<{ driverId: string; reason: string }> }>(
+      'select metadata->\'dispatch_attempts\' as dispatch_attempts from orders where id = $1', [available.id]
+    )
+    expect(metadata.rows[0]?.dispatch_attempts).toContainEqual(
+      expect.objectContaining({ driverId, reason: 'driver_cancelled' })
+    )
+    // Le dispatcher ne lit jamais la colonne brute : il passe par findDispatchMetadata(), dont le
+    // filtre de type doit accepter 'driver_cancelled' — sinon l'exclusion écrite ci-dessus est
+    // invisible pour StartDispatchUseCase malgré une ligne bien présente en base (bug réel trouvé
+    // en revue : le filtre n'acceptait que 'refused'/'timeout').
+    const dispatchMetadata = await orders.findDispatchMetadata(available.id)
+    expect(dispatchMetadata?.dispatchAttempts).toContainEqual(
+      expect.objectContaining({ driverId, reason: 'driver_cancelled' })
+    )
+
+    // La commande redevient réellement assignable (AVAILABLE, driver_id NULL) — l'exclusion
+    // du livreur qui a annulé se fait au niveau du dispatcher via dispatch_attempts (vérifié
+    // ci-dessus), jamais par une interdiction en base : assign() lui-même n'a jamais connu
+    // cette notion et n'a pas à la connaître.
+    const reassigned = await orders.assignOrder({
+      orderId: unassigned.id, driverId, expectedVersion: unassigned.version, actor: { type: 'driver', id: driverId }
+    })
+    expect(reassigned).toMatchObject({ status: 'ASSIGNED', driverId })
+  })
+
+  it('rejects unassign for the wrong driver, wrong version, or a non-ASSIGNED order, without mutating it', async () => {
+    const available = await createOrder()
+    const assigned = await orders.assignOrder({
+      orderId: available.id, driverId, expectedVersion: available.version, actor: { type: 'driver', id: driverId }
+    })
+
+    await expect(orders.unassignOrder({
+      orderId: assigned.id, driverId: otherDriverId, expectedVersion: assigned.version, actor: { type: 'driver', id: otherDriverId }
+    })).rejects.toBeInstanceOf(OrderConflictError)
+    await expect(orders.unassignOrder({
+      orderId: assigned.id, driverId, expectedVersion: assigned.version + 1, actor: { type: 'driver', id: driverId }
+    })).rejects.toBeInstanceOf(OrderConflictError)
+
+    const collected = await orders.collectOrder({
+      orderId: assigned.id, driverId, expectedVersion: assigned.version, actor: { type: 'driver', id: driverId }
+    })
+    await expect(orders.unassignOrder({
+      orderId: collected.id, driverId, expectedVersion: collected.version, actor: { type: 'driver', id: driverId }
+    })).rejects.toBeInstanceOf(OrderConflictError)
+
+    const persisted = await pool.query<{ status: string; version: number }>(
+      'select status, version from orders where id = $1', [available.id]
+    )
+    expect(persisted.rows[0]).toEqual({ status: 'COLLECTED', version: collected.version })
   })
 
   it('persists RETURNING -> RETURNED with its transition and outbox events', async () => {

@@ -11,3 +11,6 @@ export class AuthProviderError extends Error {
     this.name = 'AuthProviderError'
   }
 }
+
+/** A request may have reached GoTrue; do not compensate until it is reconciled. */
+export class AuthProviderUnknownOutcomeError extends AuthProviderError {}

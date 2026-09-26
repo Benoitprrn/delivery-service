@@ -38,14 +38,22 @@ Modules : `zones`, `merchants`, `drivers`, `pricing`, `orders`, `marketplace`,
 `integrations` (vides jusqu'à Phase 2/3).
 
 `auth` : vérification JWT Supabase (JWKS) sur tout `/api/v1/*` sauf le
-tracking public et `POST /api/v1/auth/merchant-signup` ; expose aussi le
+tracking public et `POST /api/v1/auth/{merchant,driver}-signup` ; expose aussi le
 port `AuthAdmin` (création/suppression d'utilisateur Supabase Auth via
 l'API Admin `fetch`-based, `infrastructure/supabase-auth-admin.ts`) utilisé
-par `merchants` pour l'inscription. `SUPABASE_SECRET_KEY` (nouvelle Secret
+  par `merchants` et `drivers` pour l'inscription. `SUPABASE_SECRET_KEY` (nouvelle Secret
 API Key Supabase, remplace l'ancienne `service_role` legacy) est désormais
 **obligatoire** (`platform/config.ts`) — l'API ne démarre pas sans, y
 compris en local. Strictement backend : jamais `NEXT_PUBLIC_*`, jamais
 loggée, jamais commitée.
+
+L’inscription livreur (`POST /api/v1/auth/driver-signup`, migration `0054_driver_signup.sql`) exige `DRIVER_SIGNUP_ZONE_ID`, vérifié au démarrage contre `zones`. `account_phone_registry` (module `auth`) est l’unique invariant atomique d’unicité de téléphone entre comptes merchant/driver (contrainte `unique`, jamais un simple `SELECT` puis `INSERT`) ; les numéros sont conservés en E.164. Côté merchant, seul `merchant_account_contact.phone` (le titulaire du compte) y est inscrit — jamais `merchants.phone_primary`/`phone_secondary`, lignes opérationnelles du restaurant, légitimement partageables. **Dette assumée** : les `PATCH` existants (`/merchants/me/account-contact`, `/drivers/me`) ne mettent pas encore à jour ce registre lors d'un changement de téléphone après l'inscription — seul l'état à l'inscription (et le backfill de migration) est garanti ; à couvrir dans une tranche dédiée avant que l'invariant ne se dégrade en usage réel. `driver_terms_acceptances` est append-only (trigger, `UPDATE`/`DELETE` interdits) et ne vaut que preuve de la case d'inscription (jamais mandat SEPA/contrat) ; elle n'est écrite qu'APRÈS confirmation Auth (jamais dans la transaction locale de réservation, qui doit rester compensable — un premier essai l'écrivait trop tôt et rendait toute compensation impossible, corrigé).
+
+Issue Auth ambiguë (`AuthProviderUnknownOutcomeError`, ex. timeout réseau) : `ProvisionDriverUseCase` tente d'abord une réconciliation par lookup (`getUserEmail`). Trois issues distinctes, jamais confondues : (1) compte confirmé créé → finalisé normalement, `201` ; (2) compte confirmé ABSENT (lookup réussi, réponse négative) → traité comme n'importe quel échec Auth, compensation immédiate (réservation locale supprimée), `502 DriverProvisioningError` — **retentable**, jamais un `202` (un vrai bug initial y envoyait aussi ce cas, corrigé — un `202` ne doit jamais représenter un résultat qu'on a déjà prouvé négatif) ; (3) issue réellement indécidable (le lookup lui-même échoue, aucune preuve possible dans un sens ou l'autre) → seul cas `202`, réservation conservée (jamais supprimée à l'aveugle), événement `driver.signup.reconcile.v1` enregistré dans `outbox_event`. **Aucun worker ne consomme cet événement aujourd'hui** (dead letter manuel, visible par log `error` uniquement) — accepté comme dette pour un cas désormais rare (double échec : création ET vérification), pas une infrastructure de réconciliation disproportionnée pour ce volume. `enable_signup` du projet Supabase **hébergé** (Auth réel, distinct du `config.toml` local qui ne gouverne que le Postgres local) reste activé — action manuelle requise dans le Dashboard avant que l'inscription livreur ne remplace effectivement tout accès direct.
+
+**CGU append-only ≠ compte indélébile.** La contrainte porte sur la PREUVE (jamais falsifiable après coup), pas sur le compte utilisateur : `driver_terms_acceptances.driver_id` référence `drivers(id)` sans cascade, donc un livreur dont l'inscription a été finalisée (preuve écrite) ne peut plus être supprimé par un simple `DELETE FROM drivers` — attendu, pas un bug. Une future fermeture de compte / anonymisation RGPD ne doit JAMAIS tenter de supprimer physiquement cette ligne ; elle doit anonymiser en place (`drivers.first_name`/`last_name`/`phone` mis à `null`, déjà nullable) et libérer `account_phone_registry` (celui-ci n'est PAS append-only, `DELETE` normal) pour permettre la réutilisation du numéro — la preuve CGU reste alors seule et intacte, rattachée à un compte anonymisé plutôt que supprimé. Même patron déjà en place ailleurs dans ce module (`driver_einvoice_mandates` : `revoked_at`/`revocation_reason`, jamais de suppression). Aucun mécanisme de fermeture de compte n'existe encore — hors scope tant que non explicitement demandé.
+
+Le formulaire mobile n'a qu'un seul champ mot de passe : `driverSignupBodySchema` n'exige donc pas de `passwordConfirmation` (contrairement à `merchant-signup`, dont le formulaire web affiche deux champs distincts — une confirmation qui compare la même valeur au champ unique mobile ne vérifierait rien).
 
 ## Règles spécifiques backend
 
@@ -998,6 +1006,49 @@ loggée, jamais commitée.
   driverEligibility })` permet aux tests HTTP de les remplacer. Les tests d'écriture sur les tables de règlement
   (`test/settlements/*.integration.test.ts`) sont IGNORÉS hors base nommée `*settlement*`/`*test*` et utilisent leurs propres
   restaurants/livreurs (`aaaaaaaa-…`, `bbbbbbbb-…`) pour ne pas perturber les fixtures partagées.
+- Garde D-CP (Compte → Mon Entreprise, 2026-09-25, `modules/orders`) : `AssignOrderUseCase` et
+  `ListAvailableOrdersUseCase` exigent aussi le port `DriverCompanyProfileReadiness`
+  (`ports/driver-company-profile-readiness.ts`), **distinct** de D-F (`DriverEligibility`, compte
+  de paiement Stripe) et de la garde de facturation ADR 0006 — les trois causes doivent rester
+  identifiables séparément. `app.ts` l'injecte en lisant `drivers.getCompanyProfileStatus` (module
+  `drivers`, voir plus bas). Refus : erreur DÉDIÉE `DriverCompanyProfileNotReadyError` (403,
+  jamais `DriverPayoutAccountNotReadyError` — les deux causes ne doivent jamais partager un même
+  code d'erreur, sinon le client ne peut pas distinguer laquelle des deux conditions manque).
+  `buildApp({ driverCompanyProfileReadiness })` permet aux tests HTTP de la remplacer ; défaut
+  permissif réservé aux tests unitaires du module `orders`. Tests :
+  `test/orders/settlement-guards.test.ts` (bloc « D-CP », fakes, y compris l'ordre de priorité
+  D-F avant D-CP quand les deux échouent) et `test/drivers/company-profile.integration.test.ts`
+  (base réelle : brouillon partiel, calcul `complete`/`missing`, publication différée vers
+  `drivers`/`driver_legal_information` uniquement une fois complet, non-effacement rétroactif de
+  la publication si un document est ensuite supprimé).
+- Garde D-MD (mandat de facturation électronique, 2026-09-25, `modules/orders`) : décision produit
+  amendant ADR 0007 §2 — un livreur qui n'a pas SIGNÉ son mandat ne se voit proposer ni ne peut
+  prendre aucune course (impossible d'émettre sa facture de livraison sans mandat). `AssignOrderUseCase`
+  et `ListAvailableOrdersUseCase` exigent le port `DriverMandateReadiness`
+  (`ports/driver-mandate-readiness.ts`), **distinct** de D-F/D-CP et de `DriverEInvoiceReadiness`
+  (module `invoices`, transmission uniquement) : critère = mandat SIGNÉ (`driver_einvoice_mandates`,
+  `revoked_at is null`), **jamais** la vérification Super PDP (`provider_verification_status`) —
+  décision assumée, à revoir plus tard quand un contrôle fiable sera possible. `app.ts` l'injecte en
+  lisant `invoices.hasSignedMandate` (nouvel export `modules/invoices/public.ts`, requête directe sur
+  `driver_einvoice_mandates`, câblage tardif car `invoices` est construit après `orders`, même patron
+  que D-CP). Refus : erreur DÉDIÉE `DriverMandateNotReadyError` (403). Ordre de priorité si plusieurs
+  gardes échouent : D-F, puis D-CP, puis D-MD (`buildApp({ driverMandateReadiness })` pour les tests
+  HTTP ; défaut permissif réservé aux tests unitaires du module `orders`). Tests :
+  `test/orders/settlement-guards.test.ts` (bloc « D-MD », fakes).
+- Compte → Mon Entreprise (livreur, 2026-09-25) : `DriverCompanyProfileUseCases`
+  (`modules/drivers/application/company-profile.ts`) — brouillon distinct du profil légal
+  publiable, table `driver_company_profile_drafts` (1:1 `drivers`, tous champs nullable, seedée
+  paresseusement depuis `drivers`/`driver_legal_information` au premier accès pour les comptes
+  déjà existants). `GET/PATCH /api/v1/drivers/me/company-profile` : le `PATCH` accepte n'importe
+  quel sous-ensemble de champs `null` (aucune validation de complétude côté Zod, seulement des
+  formats/tailles) et upsert toujours le brouillon. La complétude (`{complete, missing[]}`) est
+  calculée à la lecture (nom/prénom/téléphone FR, forme juridique, raison sociale, SIRET Luhn-
+  valide, adresse complète, régime de TVA + n° si `assujetti`, présence des 2
+  `account_documents` non remplacés) — **jamais** stockée. Publication : `save()` n'écrit dans
+  `drivers`/`driver_legal_information` qu'après avoir vérifié que le résultat est complet ; sinon
+  seul le brouillon est mis à jour. `drivers.getCompanyProfileStatus` (exposé par `public.ts`)
+  alimente à la fois le badge « à compléter » de l'app et la garde D-CP ci-dessus — une seule
+  source de vérité. Remplace l'ancien flux à 3 endpoints (Étape 3) — voir « Nettoyage » plus bas.
 - Compte de paiement du livreur (R30, `modules/settlements`) : Account Stripe v2 `recipient`, `dashboard=express`,
   `fees_collector`/`losses_collector` = `application` (seules valeurs acceptées), Stripe collecte le KYC ; type d'entité
   `individual`/`company` choisi UNE fois (verrouillé : `409 EntityTypeLocked`). Création EXPLICITE par
@@ -1017,3 +1068,31 @@ loggée, jamais commitée.
   Les petites suites unitaires/intégration gardent leurs bases isolées habituelles (`settlements_r10`, `payments_test`). Le schéma n'évolue que par NOUVELLES migrations (jamais de réécriture d'une migration déjà
   appliquée). Deux vérifications distinctes à conserver : Fresh install (base vide → toutes les migrations → dernière version) et Upgrade (ancienne version contenant des données financières → nouvelles migrations →
   historique intact, application fonctionnelle).
+- Annulation d'une course par le livreur (2026-09-26) : la transition `ASSIGNED → AVAILABLE`, documentée mais jusqu'ici jamais implémentée dans `docs/adr/0001-order-states.md`, est désormais exposée par
+  `POST /api/v1/orders/:id/unassign` (`UnassignOrderUseCase`, rôle `driver`, corps `{expectedVersion}`, même forme que `.../collect`/`.../return`). `PostgresOrderRepository.unassign()` fait, en UNE transaction :
+  `UPDATE orders SET status='AVAILABLE', driver_id=null, assigned_at=null, version=version+1` + append d'une entrée `{driverId, reason:'driver_cancelled', round:0, refusedAt}` dans `metadata.dispatch_attempts`
+  (même mécanisme jsonb que `recordDispatchAttempt`, mais dans la MÊME transaction que le changement de statut plutôt qu'un second `UPDATE` versionné séparé) + `INSERT order_events` (from `ASSIGNED`) +
+  `INSERT outbox_event` (`order.unassigned.v1`, `buildOrderUnassignedEvent`). Cette entrée `dispatch_attempts` est **obligatoire, jamais optionnelle** : sans elle, le dispatcher séquentiel (module `dispatch`,
+  `StartDispatchUseCase`, qui exclut par `dispatchAttempts.map(driverId)`) pourrait réoffrir instantanément la même commande au livreur qui vient de l'annuler — c'est le mécanisme d'exclusion PERMANENTE pour
+  cette commande, `DispatchAttempt.reason` étend donc `'refused' | 'timeout'` à `'refused' | 'timeout' | 'driver_cancelled'` (`domain/dispatch.ts`). `UnassignOrderUseCase` appelle ensuite
+  `capacityWriter.decrement(driverId)`, hors transaction, même patron que `ConfirmReturnUseCase`/`CompleteOrderUseCase`. `realtime/socket-handler.ts` route `order.unassigned.v1` exactement comme
+  `order.created.v1` (`dispatch.startDispatch(orderId)`, retour immédiat, aucune diffusion socket générique) — c'est le SEUL mécanisme qui fait réellement « repartir la commande dans le dispatch », le worker
+  outbox l'appelle après la transaction, jamais dedans (aucun appel réseau dans le bloc `inTransaction`). Aucune restriction temporelle ni pénalité : possible tant que `status === 'ASSIGNED'`, plus du tout après
+  `COLLECTED` (ADR 0001, aucune exception). Tests : `test/orders/order-lifecycle.test.ts` (cycle réel Postgres — transition, événements, exclusion en base ET via `orders.findDispatchMetadata()`, réassignabilité par un AUTRE appel `assignOrder`, gardes
+  mauvais livreur/version/statut), `test/http/orders.http.test.ts` (route HTTP, 403 non-driver — les tests HTTP de ce fichier dépendent de l'auth Supabase HÉBERGÉE réelle via `test/support/get-driver-access-
+  token.ts`, indisponible dans certains environnements d'exécution sans le compte de test provisionné côté hébergé ; préexistant, non spécifique à cette tranche). **Bug réel trouvé et corrigé en revue** : le
+  filtre de type de `findDispatchMetadata()` (même fichier, méthode préexistante) n'acceptait que `reason === 'refused' | 'timeout'` — une entrée `driver_cancelled` pourtant bien écrite en base était donc
+  silencieusement filtrée avant d'atteindre `StartDispatchUseCase`, rendant l'exclusion inopérante malgré une ligne présente en base (le test de non-régression `order-lifecycle.test.ts` vérifie désormais
+  explicitement via `orders.findDispatchMetadata()`, pas seulement la colonne brute).
+- Remasquage des données client après livraison (2026-09-26) : `driverOrderSelect` (source unique de `findDriverOrderById`/`findActiveByDriverId`/`findHistoryByDriverId`/`findAvailableInZone`,
+  `postgres-order-repository.ts`) masquait déjà `customer_name`/`customer_phone` (`CASE WHEN o.status IN (...) THEN ... ELSE null END`) pour tout statut avant collecte, mais laissait `COMPLETED` dans la
+  liste des statuts visibles — le nom et le téléphone du client restaient donc lisibles indéfiniment pour le livreur une fois la commande livrée, y compris dans l'historique. Ce `CASE` ne couvre plus que
+  `('COLLECTED', 'RETURNING', 'RETURNED')` : `COMPLETED` en est sorti, aucune raison opérationnelle de garder ces champs visibles après la livraison. `RETURNED` reste volontairement inchangé (non demandé,
+  décision produit distincte à trancher séparément si besoin). Source unique de vérité : ce `CASE` dans `driverOrderSelect`, jamais dupliqué ailleurs — les quatre méthodes qui le composent en héritent
+  automatiquement. Test : `test/orders/order-lifecycle.test.ts` (assertion ajoutée à la fin du scénario `AVAILABLE → ... → COMPLETED`, via `orders.findDriverOrderById()`).
+- Cycle `check:boundaries` `modules/merchants` corrigé (2026-09-26) : `MerchantAccountContact` (`{firstName, lastName, phone}`) vivait dans `application/account-contact.ts`, importé en retour par
+  `ports/merchant-repository.ts` (`MerchantAccountContactRepository`) — cycle type-only (`import type` des deux côtés, aucun impact runtime, TypeScript l'efface entièrement à la compilation) mais interdit
+  par `.dependency-cruiser.cjs` (`options.tsPreCompilationDeps: true`, choix délibéré du projet qui fait aussi compter les dépendances de type dans la règle `no-circular`). Déplacé vers `domain/merchant.ts`,
+  à côté de `Merchant` — même patron que ce type frère, déjà importé sans souci par `ports/`. `application/account-contact.ts` et `ports/merchant-repository.ts` importent désormais tous les deux depuis
+  `domain/`, jamais l'un depuis l'autre. Aucun changement de logique, uniquement le type déplacé et les imports ajustés (`infrastructure/postgres-merchant-repository.ts`, `transport/http/routes.ts`,
+  `test/merchants/account-contact.test.ts`).

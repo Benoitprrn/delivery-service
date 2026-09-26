@@ -3,19 +3,27 @@ import type { OrderRepository } from '../ports/order-repository.js'
 import type { DriverAvailabilityReader } from '../ports/driver-availability-reader.js'
 import type { DriverEligibility } from '../ports/driver-eligibility.js'
 import type { DriverInvoiceReadiness } from '../ports/driver-invoice-readiness.js'
+import type { DriverCompanyProfileReadiness } from '../ports/driver-company-profile-readiness.js'
+import type { DriverMandateReadiness } from '../ports/driver-mandate-readiness.js'
 
 export class ListAvailableOrdersUseCase {
   public constructor(
     private readonly orderRepository: OrderRepository,
     private readonly availabilityReader: DriverAvailabilityReader,
     private readonly eligibility: DriverEligibility = { isEligible: async () => true },
-    private readonly invoiceReadiness: DriverInvoiceReadiness = { isReady: async () => true }
+    private readonly invoiceReadiness: DriverInvoiceReadiness = { isReady: async () => true },
+    private readonly companyProfileReadiness: DriverCompanyProfileReadiness = { isReady: async () => true },
+    private readonly mandateReadiness: DriverMandateReadiness = { isReady: async () => true }
   ) {}
 
   public async execute({ driverId, zoneId }: { driverId: string; zoneId: string }): Promise<AvailableOrder[]> {
     if (!(await this.availabilityReader.isAvailable(driverId))) return []
     // D-F : livreur sans compte de paiement prêt = aucune course proposée.
     if (!(await this.eligibility.isEligible(driverId))) return []
+    // D-CP : dossier « Mon entreprise » incomplet = aucune course proposée.
+    if (!(await this.companyProfileReadiness.isReady(driverId))) return []
+    // D-MD : mandat de facturation non signé = aucune course proposée.
+    if (!(await this.mandateReadiness.isReady(driverId))) return []
     if (!(await this.invoiceReadiness.isReady(driverId))) return []
     return this.orderRepository.findAvailableInZone(zoneId)
   }

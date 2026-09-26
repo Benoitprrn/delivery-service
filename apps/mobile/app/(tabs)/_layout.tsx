@@ -70,7 +70,7 @@ function TabsNavigator({ insets }: { insets: ReturnType<typeof useSafeAreaInsets
       <Tabs.Screen
         name="orders/index"
         options={{
-          title: 'Mes courses',
+          title: 'Courses',
           tabBarIcon: ({ color }) => <Package size={ICON_SIZE} color={color} />
         }}
       />
@@ -82,7 +82,8 @@ function TabsNavigator({ insets }: { insets: ReturnType<typeof useSafeAreaInsets
         }}
       />
       <Tabs.Screen name="compte/mon-compte" options={{ href: null }} />
-      <Tabs.Screen name="compte/wallet" options={{ href: null }} />
+      <Tabs.Screen name="compte/mes-paiements" options={{ href: null }} />
+      <Tabs.Screen name="compte/mes-factures" options={{ href: null }} />
     </Tabs>
   );
 }
